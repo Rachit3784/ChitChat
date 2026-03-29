@@ -26,7 +26,7 @@ class EncryptionService {
   /**
    * Generates a new ECDH Curve25519 key pair and stores it.
    */
-  public async generateAndStoreKeyPair(uid: string): Promise<string> {
+  public async generateAndStoreKeyPair(uid: string): Promise<{ publicKey: string; keyUpdatedAt: number }> {
     const keyPair = nacl.box.keyPair();
     const publicKeyBase64 = fromByteArray(keyPair.publicKey);
     const privateKeyBase64 = fromByteArray(keyPair.secretKey);
@@ -37,12 +37,14 @@ class EncryptionService {
       accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED,
     });
 
-    // Save Public Key in Firestore users collection
+    // Save Public Key + keyUpdatedAt in Firestore users collection
+    const keyUpdatedAt = Date.now();
     await firestore().collection('users').doc(uid).set({
       publicKey: publicKeyBase64,
+      keyUpdatedAt: keyUpdatedAt,
     }, { merge: true });
 
-    return publicKeyBase64;
+    return { publicKey: publicKeyBase64, keyUpdatedAt };
   }
 
   /**

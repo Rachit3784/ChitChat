@@ -86,3 +86,10 @@ secrets.xml
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Android APKs
+*.apk
+*.aab
+*.ap_
+android/app/build/
+android/build/

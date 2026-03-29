@@ -43,6 +43,15 @@ const userStore = create(
       token: null,
       userEmailID: null,
       userModelID: null,
+      userPhoto: null,
+      isBusy: false,
+      keyUpdatedAt: 0, // 0 means not set or first time
+      setUserModelID: (id) => set({ userModelID: id }),
+      setUserName: (name) => set({ userName: name }),
+      setUserPhoto: (photo) => set({ userPhoto: photo }),
+      setIsBusy: (busy) => set({ isBusy: busy }),
+      setKeyUpdatedAt: (time) => set({ keyUpdatedAt: time }),
+
       userData: null,
       gender: null,
       userProfileData: null,
@@ -65,6 +74,7 @@ const userStore = create(
             userMobileNum: mergedData.mobileNumber,
             userData: mergedData,
             token: token || state.token,
+            keyUpdatedAt: mergedData.keyUpdatedAt || state.keyUpdatedAt || 0,
           }));
           return { success: true };
         } catch (error) {
@@ -138,6 +148,7 @@ const userStore = create(
           userProfileData: null,
           currentProfileUrl: '',
           gender: null,
+          keyUpdatedAt: 0,
         });
 
         // 7. AsyncStorage — wipe everything
@@ -176,6 +187,7 @@ const userStore = create(
         userProfileData: state.userProfileData,
         currentProfileUrl: state.currentProfileUrl,
         userMobileNum: state.userMobileNum,
+        keyUpdatedAt: state.keyUpdatedAt,
       }),
     }
   )

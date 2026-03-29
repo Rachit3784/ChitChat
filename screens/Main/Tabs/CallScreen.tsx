@@ -8,6 +8,7 @@ import {
   Image, RefreshControl, StatusBar, SafeAreaView, Platform,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Phone, Video, PhoneIncoming, PhoneOutgoing,
   PhoneMissed, Trash2,
@@ -36,6 +37,7 @@ type FilterTab = 'all' | 'missed';
 
 const CallScreen = () => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const { userModelID } = userStore();
   const [logs, setLogs] = useState<CallLog[]>([]);
   const [filter, setFilter] = useState<FilterTab>('all');
@@ -237,7 +239,7 @@ const CallScreen = () => {
           data={filteredLogs}
           keyExtractor={(item) => `${item.id}_${item.startedAt}`}
           renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: Math.max(insets.bottom + 85, 100) }]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -263,8 +265,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 20 : 10,
     paddingBottom: 14,
+    height : 90
   },
-  headerTitle: { fontSize: 28, fontWeight: '800', color: G.TEXT, letterSpacing: -0.5 },
+  headerTitle: {marginTop : 20, fontSize: 28, fontWeight: '800', color: G.TEXT, letterSpacing: -0.5 },
   headerSub: { fontSize: 13, color: G.TEXT_SEC, marginTop: 2, fontWeight: '500' },
   clearBtn: {
     width: 42, height: 42, borderRadius: 21,

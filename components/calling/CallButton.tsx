@@ -4,9 +4,11 @@
  * Used in: HomeScreen contact rows, ChatScreen header, CallScreen logs.
  */
 import React from 'react';
-import { TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
+import { TouchableOpacity, StyleSheet, ViewStyle, Alert } from 'react-native';
 import { Video, Phone } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
+import CallManageService from '../../services/calling/CallManageService';
+import userStore from '../../store/MyStore';
 
 interface CallButtonProps {
   type: 'video' | 'audio';
@@ -28,23 +30,29 @@ const CallButton: React.FC<CallButtonProps> = ({
   style,
 }) => {
   const navigation = useNavigation<any>();
+  const { userModelID, userName, isBusy } = userStore();
 
-  const handlePress = () => {
-    navigation.navigate('Screens', {
-      screen: 'OutgoingCallScreen',
-      params: {
-        contactUid,
-        contactName,
-        contactPhoto: contactPhoto || null,
-        callType: type,
-      },
-    });
+  const handlePress = async () => {
+    if (isBusy) return;
+    // Phase 1: Call Initiation (Service will handle UI transition)
+    const res = (await CallManageService.initiateCall(
+      { id: userModelID, name: userName },
+      contactUid,
+      contactName,
+      (contactPhoto || null) as any,
+      type
+    )) as any;
+
+    if (!res.success) {
+      Alert.alert('Call Failed', res.message || 'Check your connection');
+    }
   };
 
   return (
     <TouchableOpacity
       onPress={handlePress}
-      style={[styles.btn, style]}
+      disabled={isBusy}
+      style={[styles.btn, style, isBusy && { opacity: 0.5 }]}
       activeOpacity={0.7}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
@@ -67,3 +75,4 @@ const styles = StyleSheet.create({
 });
 
 export default CallButton;
+

@@ -4,6 +4,7 @@ import {
   SafeAreaView, ActivityIndicator, RefreshControl, Platform, StatusBar,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Plus, Eye, Heart, Camera } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import StatusService, { GroupedStatus, StatusData } from '../../../services/status/StatusService';
@@ -29,6 +30,7 @@ const VIEWED_STATUSES_KEY = 'chitchat_viewed_statuses';
 
 const StatusScreen = () => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const { userModelID, userName, userData } = userStore();
   const myPhoto = userData?.photo || '';
 
@@ -275,7 +277,7 @@ const StatusScreen = () => {
 
       {/* FAB */}
       <TouchableOpacity
-        style={st.fab}
+        style={[st.fab, { bottom: Math.max(insets.bottom + 85, 92) }]}
         onPress={() => navigation.navigate('Screens', { screen: 'CreateStatusScreen' })}
         activeOpacity={0.85}
       >

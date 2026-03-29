@@ -5,6 +5,7 @@ import EncryptionService from './EncryptionService';
 import LocalDBService, { CachedMessage } from '../../localDB/LocalDBService';
 import ImageEncryptionService from '../media/ImageEncryptionService';
 import { Asset } from 'react-native-image-picker';
+import userStore from '../../store/MyStore';
 
 class MessageSyncService {
   public activeChatId: string | null = null;
@@ -49,7 +50,13 @@ class MessageSyncService {
     const handleInboxEntry = async (snapshot: any) => {
       const contactUid = snapshot.key;
       const data = snapshot.val();
+      const keyUpdatedAt = userStore.getState().keyUpdatedAt || 0;
+
       if (!data || !contactUid) return;
+      if (data.timestamp && data.timestamp < keyUpdatedAt) {
+        console.log(`[MSS] Skipping legacy inbox entry for ${contactUid} (Epoch: ${keyUpdatedAt}, Msg: ${data.timestamp})`);
+        return;
+      }
 
       const chatId = this.getChatId(myUid, contactUid);
       const isCurrentlyInChat = this.activeChatId === chatId;
@@ -161,12 +168,13 @@ class MessageSyncService {
       return;
     }
 
-    console.log(`[MSS] Starting listener for chat: ${chatId}`);
-    this.messageListeners.set(chatId, true);
+    const keyUpdatedAt = userStore.getState().keyUpdatedAt || 0;
+    console.log(`[MSS] Starting listener for chat: ${chatId} (Filtering from: ${keyUpdatedAt})`);
 
     const messagesRef = database()
       .ref(`messages/${chatId}`)
       .orderByChild('timestamp')
+      .startAt(keyUpdatedAt)
       .limitToLast(50);
 
     // New message
@@ -387,11 +395,7 @@ class MessageSyncService {
       }
 
       // 7. Atomic RTDB write
-      let currentUnread = 0;
-      try {
-        const snap = await database().ref(`/inbox/${contactUid}/${myUid}/unreadCount`).once('value');
-        currentUnread = snap.val() || 0;
-      } catch {}
+      // No need to fetch current unread count; server-side increment handles this now.
 
       const previewText = caption ? `📷 ${caption}` : '📷 Photo';
       // Encrypt the preview for inbox (so inbox preview is also E2EE)
@@ -423,7 +427,7 @@ class MessageSyncService {
       updates[`/inbox/${contactUid}/${myUid}/lastMessageCipherText`] = encPreview.cipherText;
       updates[`/inbox/${contactUid}/${myUid}/lastMessageIv`] = encPreview.iv;
       updates[`/inbox/${contactUid}/${myUid}/timestamp`] = timestamp;
-      updates[`/inbox/${contactUid}/${myUid}/unreadCount`] = currentUnread + 1;
+      updates[`/inbox/${contactUid}/${myUid}/unreadCount`] = database.ServerValue.increment(1);
 
       await database().ref().update(updates);
 
@@ -455,7 +459,7 @@ class MessageSyncService {
       if (this.onMessageCallback) this.onMessageCallback(chatId);
 
       // 9. Trigger push notification
-      this.triggerImagePushNotification(contactUid, myUid, chatId, msgId).catch(() => {});
+      this.triggerImagePushNotification(contactUid, myUid, chatId, msgId, thumbResult.thumbUrl).catch(() => {});
 
       return msgId;
     } catch (err) {
@@ -533,13 +537,14 @@ class MessageSyncService {
     receiverId: string,
     senderId: string,
     chatId: string,
-    msgId: string
+    msgId: string,
+    imageUrl?: string
   ) {
     try {
       const me = LocalDBService.getContactByUid(senderId);
       const senderName = me?.name || 'New Message';
 
-      await fetch('http://10.71.90.27:5221/send-image-notification', {
+      await fetch('https://push-notification-dvsr.onrender.com/send-image-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -549,6 +554,7 @@ class MessageSyncService {
           chatId,
           msgId,
           type: 'image_message',
+          imageUrl: imageUrl || '',
         }),
       });
       console.log('[MSS] Image push notification triggered.');
@@ -606,13 +612,7 @@ class MessageSyncService {
 
     // Safely execute an offline-compatible Unread increment instead of using .transaction()
     // Transaction() drops writes if the app is killed while offline!
-    let currentUnread = 0;
-    try {
-      const snap = await database().ref(`/inbox/${contactUid}/${myUid}/unreadCount`).once('value');
-      currentUnread = snap.val() || 0;
-    } catch (e) {
-      console.log('[MSS] Offline native cache fallback for unreadCount');
-    }
+    // No need to fetch current unread count; server-side increment handles this now.
 
     const updates: any = {};
     updates[`/messages/${chatId}/${msgId}`] = {
@@ -631,7 +631,7 @@ class MessageSyncService {
     updates[`/inbox/${contactUid}/${myUid}/lastMessageCipherText`] = encrypted.cipherText;
     updates[`/inbox/${contactUid}/${myUid}/lastMessageIv`] = encrypted.iv;
     updates[`/inbox/${contactUid}/${myUid}/timestamp`] = timestamp;
-    updates[`/inbox/${contactUid}/${myUid}/unreadCount`] = currentUnread + 1;
+    updates[`/inbox/${contactUid}/${myUid}/unreadCount`] = database.ServerValue.increment(1);
 
     // Execute RTDB update but don't block the UI
     database().ref().update(updates).then(() => {
@@ -667,7 +667,7 @@ class MessageSyncService {
       const senderName = me?.name || "New Message";
 
       // 2. Send the encrypted payload to your Node.js server
-      await fetch('http://10.71.90.27:5221/send-notification', {
+      await fetch('https://push-notification-dvsr.onrender.com/send-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

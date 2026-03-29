@@ -16,6 +16,16 @@ import StatusService, { STATUS_GRADIENTS } from '../../../services/status/Status
 import JioSaavnService, { SaavnSong } from '../../../services/status/JioSaavnService';
 import userStore from '../../../store/MyStore';
 
+const G = {
+  BG: '#0A0A0A',
+  GOLD: '#F5C518',
+  GLASS: 'rgba(255,255,255,0.07)',
+  GLASS_BORDER: 'rgba(255,255,255,0.12)',
+  TEXT: '#FFFFFF',
+  TEXT_SEC: 'rgba(255,255,255,0.55)',
+  SEPARATOR: 'rgba(255,255,255,0.07)',
+};
+
 const { width: SW, height: SH } = Dimensions.get('window');
 
 type StatusType = 'image' | 'text';
@@ -144,7 +154,7 @@ const CreateStatusScreen = () => {
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-          <ChevronLeft size={28} color="#fff" />
+          <ChevronLeft size={28} color={G.TEXT} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Create Status</Text>
         <View style={{ width: 36 }} />
@@ -162,14 +172,14 @@ const CreateStatusScreen = () => {
               style={[s.typeBtn, statusType === 'image' && s.typeBtnActive]}
               onPress={() => setStatusType('image')}
             >
-              <ImageIcon size={20} color={statusType === 'image' ? '#fff' : '#7986cb'} />
+              <ImageIcon size={20} color={statusType === 'image' ? '#000' : G.TEXT_SEC} />
               <Text style={[s.typeLabel, statusType === 'image' && s.typeLabelActive]}>Photo</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.typeBtn, statusType === 'text' && s.typeBtnActive]}
               onPress={() => setStatusType('text')}
             >
-              <Type size={20} color={statusType === 'text' ? '#fff' : '#7986cb'} />
+              <Type size={20} color={statusType === 'text' ? '#000' : G.TEXT_SEC} />
               <Text style={[s.typeLabel, statusType === 'text' && s.typeLabelActive]}>Text</Text>
             </TouchableOpacity>
           </View>
@@ -187,11 +197,11 @@ const CreateStatusScreen = () => {
               ) : (
                 <View style={s.pickArea}>
                   <TouchableOpacity style={s.pickBtn} onPress={() => pickImage(false)}>
-                    <ImageIcon size={32} color="#5c6bc0" />
+                    <ImageIcon size={32} color={G.GOLD} />
                     <Text style={s.pickLabel}>Gallery</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={s.pickBtn} onPress={() => pickImage(true)}>
-                    <Camera size={32} color="#388e3c" />
+                    <Camera size={32} color={G.GOLD} />
                     <Text style={s.pickLabel}>Camera</Text>
                   </TouchableOpacity>
                 </View>
@@ -202,7 +212,7 @@ const CreateStatusScreen = () => {
                 <TextInput
                   style={s.captionInput}
                   placeholder="Add a caption..."
-                  placeholderTextColor="#9e9e9e"
+                  placeholderTextColor={G.TEXT_SEC}
                   value={caption}
                   onChangeText={setCaption}
                   maxLength={200}
@@ -252,13 +262,13 @@ const CreateStatusScreen = () => {
               style={[s.musicBtn, selectedSong && s.musicBtnActive]}
               onPress={() => setSongModalVisible(true)}
             >
-              <Music size={20} color={selectedSong ? '#fff' : '#7986cb'} />
-              <Text style={[s.musicLabel, selectedSong && { color: '#fff' }]}>
+              <Music size={20} color={selectedSong ? '#000' : G.TEXT_SEC} />
+              <Text style={[s.musicLabel, selectedSong && { color: '#000' }]}>
                 {selectedSong ? `🎵 ${selectedSong.name} — ${selectedSong.artist}` : 'Add a song clip'}
               </Text>
               {selectedSong && (
                 <TouchableOpacity onPress={() => setSelectedSong(null)} style={s.removeSong}>
-                  <XIcon size={16} color="#fff" />
+                  <XIcon size={16} color="#000" />
                 </TouchableOpacity>
               )}
             </TouchableOpacity>
@@ -339,10 +349,10 @@ const CreateStatusScreen = () => {
             disabled={posting}
           >
             {posting ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color="#000" />
             ) : (
               <>
-                <Send size={20} color="#fff" />
+                <Send size={20} color="#000" />
                 <Text style={s.postBtnText}>Post Status</Text>
               </>
             )}
@@ -357,7 +367,7 @@ const CreateStatusScreen = () => {
         <SafeAreaView style={s.songModal}>
           <View style={s.songHeader}>
             <TouchableOpacity onPress={() => setSongModalVisible(false)}>
-              <ChevronLeft size={28} color="#212121" />
+              <ChevronLeft size={28} color={G.TEXT} />
             </TouchableOpacity>
             <Text style={s.songHeaderTitle}>Search Music</Text>
             <View style={{ width: 28 }} />
@@ -365,11 +375,11 @@ const CreateStatusScreen = () => {
 
           {/* Search bar */}
           <View style={s.songSearchBar}>
-            <Search size={18} color="#9e9e9e" />
+            <Search size={18} color={G.TEXT_SEC} />
             <TextInput
               style={s.songSearchInput}
               placeholder="Search songs, artists..."
-              placeholderTextColor="#9e9e9e"
+              placeholderTextColor={G.TEXT_SEC}
               value={songQuery}
               onChangeText={setSongQuery}
               onSubmitEditing={searchSongs}
@@ -407,15 +417,16 @@ const CreateStatusScreen = () => {
 };
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: G.BG },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#1a237e', paddingVertical: 14, paddingHorizontal: 10,
+    backgroundColor: G.BG, paddingVertical: 14, paddingHorizontal: 10,
     paddingTop: Platform.OS === 'android' ? 40 : 14,
-    elevation: 6,
+    elevation: 0,
+    borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
   backBtn: { padding: 4 },
-  headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  headerTitle: { color: G.TEXT, fontSize: 20, fontWeight: '700' },
 
   body: { padding: 16, paddingBottom: 40 },
 
@@ -424,11 +435,11 @@ const s = StyleSheet.create({
   typeBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, paddingVertical: 14, borderRadius: 14,
-    backgroundColor: '#e8eaf6', borderWidth: 2, borderColor: 'transparent',
+    backgroundColor: G.GLASS, borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
-  typeBtnActive: { backgroundColor: '#3949ab', borderColor: '#3949ab' },
-  typeLabel: { fontSize: 15, fontWeight: '600', color: '#7986cb' },
-  typeLabelActive: { color: '#fff' },
+  typeBtnActive: { backgroundColor: G.GOLD, borderColor: G.GOLD },
+  typeLabel: { fontSize: 15, fontWeight: '600', color: G.TEXT_SEC },
+  typeLabelActive: { color: '#000' },
 
   // Image preview
   previewArea: { marginBottom: 16 },
@@ -440,15 +451,15 @@ const s = StyleSheet.create({
   },
   pickArea: {
     flexDirection: 'row', gap: 20, justifyContent: 'center',
-    paddingVertical: 50, backgroundColor: '#e8eaf6', borderRadius: 16,
-    borderWidth: 2, borderColor: '#c5cae9', borderStyle: 'dashed',
+    paddingVertical: 50, backgroundColor: G.GLASS, borderRadius: 16,
+    borderWidth: 1, borderColor: G.GLASS_BORDER, borderStyle: 'dashed',
   },
   pickBtn: { alignItems: 'center', gap: 8 },
-  pickLabel: { fontSize: 14, fontWeight: '600', color: '#5c6bc0' },
+  pickLabel: { fontSize: 14, fontWeight: '600', color: G.TEXT_SEC },
   captionInput: {
-    marginTop: 12, backgroundColor: '#fff', borderRadius: 12,
-    paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, color: '#212121',
-    elevation: 1, maxHeight: 80,
+    marginTop: 12, backgroundColor: G.GLASS, borderRadius: 12,
+    paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, color: G.TEXT,
+    borderWidth: 1, borderColor: G.GLASS_BORDER, maxHeight: 80,
   },
 
   // Text editor
@@ -467,88 +478,89 @@ const s = StyleSheet.create({
     width: 38, height: 38, borderRadius: 19, marginRight: 10,
     borderWidth: 3, borderColor: 'transparent', padding: 2,
   },
-  gradientDotActive: { borderColor: '#1a237e' },
+  gradientDotActive: { borderColor: G.GOLD },
   gradientDotInner: { flex: 1, borderRadius: 16 },
 
   musicSection: { marginBottom: 20 },
   musicBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#fff', paddingVertical: 14, paddingHorizontal: 16,
-    borderRadius: 14, elevation: 2,
+    backgroundColor: G.GLASS, paddingVertical: 14, paddingHorizontal: 16,
+    borderRadius: 14, borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
-  musicBtnActive: { backgroundColor: '#3949ab' },
-  musicLabel: { flex: 1, fontSize: 14, color: '#7986cb', fontWeight: '600' },
+  musicBtnActive: { backgroundColor: G.GOLD, borderColor: G.GOLD },
+  musicLabel: { flex: 1, fontSize: 14, color: G.TEXT_SEC, fontWeight: '600' },
   removeSong: { padding: 4 },
 
   // Trimmer
   trimmerCard: {
-    backgroundColor: '#fff', marginTop: 10, borderRadius: 14, padding: 16,
-    borderWidth: 1, borderColor: '#e8eaf6', elevation: 1,
+    backgroundColor: G.GLASS, marginTop: 10, borderRadius: 14, padding: 16,
+    borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
   trimmerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  trimmerTitle: { fontSize: 14, fontWeight: '700', color: '#1a237e' },
+  trimmerTitle: { fontSize: 14, fontWeight: '700', color: G.GOLD },
   previewToggle: { 
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#43e97b', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20,
+    backgroundColor: G.GOLD, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20,
   },
-  previewToggleText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  previewToggleText: { color: '#000', fontSize: 12, fontWeight: '700' },
   timelineContainer: {
-    height: 80, backgroundColor: '#f5f5f5', borderRadius: 10,
+    height: 80, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 10,
     position: 'relative', overflow: 'hidden', justifyContent: 'center',
   },
   timelineTicks: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, paddingLeft: SW / 2 - 50 },
-  tick: { width: 2, height: 15, backgroundColor: '#c5cae9', borderRadius: 1 },
-  tickTall: { height: 25, backgroundColor: '#7986cb' },
+  tick: { width: 2, height: 15, backgroundColor: G.GLASS_BORDER, borderRadius: 1 },
+  tickTall: { height: 25, backgroundColor: G.TEXT_SEC },
   playhead: {
     position: 'absolute', left: SW / 2 - 50, top: 0, bottom: 0,
-    width: 3, backgroundColor: '#1a237e', zIndex: 10,
+    width: 3, backgroundColor: G.GOLD, zIndex: 10,
   },
   timeLabel: {
     position: 'absolute', top: 5, right: 10, zIndex: 10,
-    fontSize: 12, fontWeight: '700', color: '#1a237e',
-    backgroundColor: 'rgba(255,255,255,0.8)', paddingHorizontal: 6, borderRadius: 4,
+    fontSize: 12, fontWeight: '700', color: G.GOLD,
+    backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 6, borderRadius: 4,
   },
-  trimmerHint: { textAlign: 'center', fontSize: 11, color: '#9e9e9e', marginTop: 8, fontStyle: 'italic' },
+  trimmerHint: { textAlign: 'center', fontSize: 11, color: G.TEXT_SEC, marginTop: 8, fontStyle: 'italic' },
 
   // Post
   postBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    backgroundColor: '#1a237e', paddingVertical: 16, borderRadius: 16,
-    elevation: 4, marginBottom: 12,
+    backgroundColor: G.GOLD, paddingVertical: 16, borderRadius: 16,
+    marginBottom: 12,
   },
   postBtnDisabled: { opacity: 0.6 },
-  postBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-  e2eeNote: { textAlign: 'center', fontSize: 12, color: '#78909c' },
+  postBtnText: { color: '#000', fontSize: 17, fontWeight: '700' },
+  e2eeNote: { textAlign: 'center', fontSize: 12, color: G.TEXT_SEC },
 
   // Song modal
-  songModal: { flex: 1, backgroundColor: '#fff' },
+  songModal: { flex: 1, backgroundColor: G.BG },
   songHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 12, paddingVertical: 14,
     paddingTop: Platform.OS === 'android' ? 40 : 14,
-    borderBottomWidth: 1, borderBottomColor: '#e0e0e0',
+    borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
-  songHeaderTitle: { fontSize: 18, fontWeight: '700', color: '#212121' },
+  songHeaderTitle: { fontSize: 18, fontWeight: '700', color: G.TEXT },
   songSearchBar: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     marginHorizontal: 16, marginTop: 12, marginBottom: 8,
-    backgroundColor: '#f5f5f5', borderRadius: 12,
+    backgroundColor: G.GLASS, borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 6,
+    borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
-  songSearchInput: { flex: 1, fontSize: 15, color: '#212121', paddingVertical: 8 },
+  songSearchInput: { flex: 1, fontSize: 15, color: G.TEXT, paddingVertical: 8 },
   songList: { paddingHorizontal: 16, paddingBottom: 30 },
-  songSectionTitle: { fontSize: 16, fontWeight: '700', color: '#212121', marginVertical: 12 },
-  songEmpty: { textAlign: 'center', color: '#9e9e9e', marginTop: 40, fontSize: 14 },
+  songSectionTitle: { fontSize: 16, fontWeight: '700', color: G.GOLD, marginVertical: 12 },
+  songEmpty: { textAlign: 'center', color: G.TEXT_SEC, marginTop: 40, fontSize: 14 },
   songItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: '#e0e0e0',
+    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
-  songItemSelected: { backgroundColor: '#e8f5e9', borderRadius: 10, paddingHorizontal: 8 },
+  songItemSelected: { backgroundColor: G.GLASS, borderRadius: 10, paddingHorizontal: 8 },
   songArt: { width: 52, height: 52, borderRadius: 8 },
   songInfo: { flex: 1 },
-  songTitle: { fontSize: 15, fontWeight: '600', color: '#212121' },
-  songArtist: { fontSize: 13, color: '#757575', marginTop: 2 },
-  songDuration: { fontSize: 12, color: '#9e9e9e', marginTop: 2 },
+  songTitle: { fontSize: 15, fontWeight: '600', color: G.TEXT },
+  songArtist: { fontSize: 13, color: G.TEXT_SEC, marginTop: 2 },
+  songDuration: { fontSize: 12, color: G.TEXT_SEC, marginTop: 2 },
 });
 
 export default CreateStatusScreen;

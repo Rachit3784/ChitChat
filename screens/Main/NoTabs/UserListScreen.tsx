@@ -31,8 +31,15 @@ type SearchResult = {
   fromCache: boolean; // true = SQLite, false = Firebase search result
 };
 
-const HEADER_BG = '#1a237e';
-const ACCENT = '#1565c0';
+const G = {
+  BG: '#0A0A0A',
+  GOLD: '#F5C518',
+  GLASS: 'rgba(255,255,255,0.07)',
+  GLASS_BORDER: 'rgba(255,255,255,0.12)',
+  TEXT: '#FFFFFF',
+  TEXT_SEC: 'rgba(255,255,255,0.55)',
+  SEPARATOR: 'rgba(255,255,255,0.07)',
+};
 
 // ─────────────────────────────────────────────
 // Helper – query Firestore for a search term
@@ -235,7 +242,7 @@ const UserListScreen = () => {
           <Text style={styles.contactName} numberOfLines={1}>{item.name}</Text>
           {!item.fromCache && (
             <View style={styles.badge}>
-              <Cloud size={10} color="#fff" />
+              <Cloud size={10} color={G.GOLD} />
               <Text style={styles.badgeText}>Found online</Text>
             </View>
           )}
@@ -245,7 +252,7 @@ const UserListScreen = () => {
         ) : null}
         <Text style={styles.contactStatus} numberOfLines={1}>{item.phoneNumber}</Text>
       </View>
-      <UserCheck size={20} color={ACCENT} />
+      <UserCheck size={20} color={G.GOLD} />
     </TouchableOpacity>
   );
 
@@ -255,7 +262,7 @@ const UserListScreen = () => {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ArrowLeft size={24} color="#fff" />
+          <ArrowLeft size={24} color={G.TEXT} />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
           <Text style={styles.headerTitle}>New Chat</Text>
@@ -266,24 +273,24 @@ const UserListScreen = () => {
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <View style={styles.searchBar}>
-          <Search size={18} color="#9e9e9e" style={{ marginLeft: 4 }} />
+          <Search size={18} color={G.TEXT_SEC} style={{ marginLeft: 4 }} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search name, phone or @username"
-            placeholderTextColor="#b0bec5"
+            placeholderTextColor={G.TEXT_SEC}
             value={searchQuery}
             onChangeText={handleSearch}
             autoCorrect={false}
             clearButtonMode="while-editing"
           />
-          {searching && <ActivityIndicator size="small" color={ACCENT} style={{ marginRight: 8 }} />}
+          {searching && <ActivityIndicator size="small" color={G.GOLD} style={{ marginRight: 8 }} />}
         </View>
       </View>
 
       {/* List */}
       {loading ? (
         <View style={styles.loaderContainer}>
-          <ActivityIndicator size="large" color={ACCENT} />
+          <ActivityIndicator size="large" color={G.GOLD} />
           <Text style={styles.loaderText}>Loading contacts...</Text>
         </View>
       ) : (
@@ -305,7 +312,7 @@ const UserListScreen = () => {
             </View>
           }
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[ACCENT]} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[G.GOLD]} tintColor={G.GOLD} />
           }
           contentContainerStyle={styles.listContent}
         />
@@ -318,44 +325,45 @@ const UserListScreen = () => {
 // Styles
 // ─────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: G.BG },
 
   // Header
   header: {
-    backgroundColor: HEADER_BG,
+    backgroundColor: G.BG,
     paddingTop: Platform.OS === 'android' ? 36 : 12,
     paddingBottom: 14,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    elevation: 6,
+    elevation: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: G.SEPARATOR,
   },
   backButton: { marginRight: 14, padding: 4 },
   headerTitleContainer: { flex: 1 },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#fff', letterSpacing: 0.3 },
-  headerSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: G.TEXT, letterSpacing: 0.3 },
+  headerSubtitle: { fontSize: 13, color: G.TEXT_SEC, marginTop: 2, fontWeight: '500' },
 
   // Search
   searchContainer: {
     padding: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    elevation: 2,
+    backgroundColor: G.BG,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: G.GLASS,
     borderRadius: 14,
     paddingHorizontal: 10,
     height: 46,
+    borderWidth: 1,
+    borderColor: G.GLASS_BORDER,
   },
   searchInput: {
     flex: 1,
     marginLeft: 8,
     fontSize: 15,
-    color: '#212121',
+    color: G.TEXT,
     paddingVertical: 0,
   },
 
@@ -368,50 +376,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#eeeeee',
-    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: G.SEPARATOR,
+    backgroundColor: 'transparent',
   },
   avatarContainer: { marginRight: 14 },
-  avatar: { width: 52, height: 52, borderRadius: 26 },
+  avatar: { width: 52, height: 52, borderRadius: 26, borderWidth: 2, borderColor: 'rgba(245,197,24,0.35)' },
   placeholderAvatar: {
-    backgroundColor: ACCENT,
+    backgroundColor: 'rgba(245,197,24,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(245,197,24,0.35)',
   },
-  avatarText: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  avatarText: { color: G.GOLD, fontSize: 20, fontWeight: '700' },
   contactInfo: { flex: 1 },
   nameRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
   contactName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#212121',
+    fontWeight: '700',
+    color: G.TEXT,
     flex: 1,
   },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: ACCENT,
+    backgroundColor: G.GLASS,
     borderRadius: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     marginLeft: 8,
+    borderWidth: 1,
+    borderColor: G.GLASS_BORDER,
   },
-  badgeText: { color: '#fff', fontSize: 10, marginLeft: 3, fontWeight: '600' },
-  usernameText: { fontSize: 13, color: '#5c6bc0', marginBottom: 1 },
-  contactStatus: { fontSize: 13, color: '#9e9e9e' },
+  badgeText: { color: G.GOLD, fontSize: 10, marginLeft: 4, fontWeight: '700' },
+  usernameText: { fontSize: 13, color: G.GOLD, marginBottom: 1, opacity: 0.8 },
+  contactStatus: { fontSize: 13, color: G.TEXT_SEC, fontWeight: '500' },
 
   // States
   loaderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loaderText: { color: '#78909c', marginTop: 12, fontSize: 14 },
+  loaderText: { color: G.TEXT_SEC, marginTop: 12, fontSize: 14 },
   emptyContainer: {
     flex: 1,
     paddingTop: 80,
     alignItems: 'center',
     paddingHorizontal: 40,
   },
-  emptyText: { fontSize: 16, fontWeight: '600', color: '#546e7a', textAlign: 'center' },
-  emptySubText: { fontSize: 13, color: '#90a4ae', marginTop: 8, textAlign: 'center' },
+  emptyText: { fontSize: 18, fontWeight: '700', color: G.TEXT, textAlign: 'center' },
+  emptySubText: { fontSize: 14, color: G.TEXT_SEC, marginTop: 8, textAlign: 'center' },
 });
 
 export default UserListScreen;

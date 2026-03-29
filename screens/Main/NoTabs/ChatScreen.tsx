@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
-  SafeAreaView,
   ActivityIndicator,
   Modal,
   Alert,
@@ -17,6 +16,7 @@ import {
   Animated,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import {
   Send,
   ChevronLeft,
@@ -347,6 +347,7 @@ const EncryptedImageBubble = ({
 const ChatScreen = () => {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const { contactUid, contactName, contactPhoto } = route.params;
   const { userModelID } = userStore();
 
@@ -579,7 +580,7 @@ const ChatScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -607,14 +608,15 @@ const ChatScreen = () => {
           </View>
         </View>
 
-        <CallButton type="audio" contactUid={contactUid} contactName={contactName} contactPhoto={contactPhoto}
-          size={21} color={THEME.headerText} style={styles.headerCallBtn} />
+        {/* <CallButton type="audio" contactUid={contactUid} contactName={contactName} contactPhoto={contactPhoto}
+          size={21} color={THEME.headerText} style={styles.headerCallBtn} /> */}
+          
         <CallButton type="video" contactUid={contactUid} contactName={contactName} contactPhoto={contactPhoto}
           size={21} color={THEME.headerText} style={styles.headerCallBtn} />
-
+{/* 
         <TouchableOpacity style={styles.headerIcon}>
           <MoreVertical size={24} color={THEME.headerText} />
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       <KeyboardAvoidingView
@@ -660,7 +662,7 @@ const ChatScreen = () => {
         )}
 
         {/* Input */}
-        <View style={styles.inputContainer}>
+        <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.inputWrapper}>
             <TouchableOpacity style={styles.emojiButton}>
               <Smile size={24} color="#9e9e9e" />
@@ -750,7 +752,7 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.headerBg,
     flexDirection: 'row', alignItems: 'center',
     paddingVertical: 12, paddingHorizontal: 8,
-    paddingTop: Platform.OS === 'android' ? 38 : 12,
+    paddingTop: Platform.OS === 'android' ? 25 : 12,
     borderBottomWidth: 1, borderBottomColor: THEME.glassBorder,
   },
   backButton: { padding: 4 },
@@ -830,7 +832,7 @@ const styles = StyleSheet.create({
 
   // Input
   inputContainer: {
-    flexDirection: 'row', alignItems: 'flex-end',
+    flexDirection: 'row', alignItems: 'flex-end',marginBottom : 10,
     paddingHorizontal: 6, paddingVertical: 8, backgroundColor: 'transparent',
   },
   inputWrapper: {

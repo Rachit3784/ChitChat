@@ -7,6 +7,7 @@ import NavigationService from './NavigationService';
 import LocalDBService from '../localDB/LocalDBService';
 import EncryptionService from './chat/EncryptionService';
 import MessageSyncService from './chat/MessageSyncService';
+import { handleNotificationLogic } from './calling/NotificationHandler';
 
 // This must match exactly what is in your EncryptionService
 const KEYCHAIN_SERVICE_PRIVATE = 'secure_chat_private_key';
@@ -30,6 +31,10 @@ class NotificationService {
     // --- BACKGROUND MESSAGES ---
     messaging().setBackgroundMessageHandler(async (remoteMessage) => {
       console.log('[NotificationService] Background message:', remoteMessage);
+
+      if (remoteMessage.data?.type === 'INCOMING_CALL') {
+        await handleNotificationLogic(remoteMessage);
+      }
 
       const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
       const myUid = credentials ? credentials.username : null;

@@ -12,6 +12,16 @@ import StatusService, {
 import userStore from '../../../store/MyStore';
 import { colors } from '../../../theme/color';
 
+const G = {
+  BG: '#0A0A0A',
+  GOLD: '#F5C518',
+  GLASS: 'rgba(255,255,255,0.07)',
+  GLASS_BORDER: 'rgba(255,255,255,0.12)',
+  TEXT: '#FFFFFF',
+  TEXT_SEC: 'rgba(255,255,255,0.55)',
+  SEPARATOR: 'rgba(255,255,255,0.07)',
+};
+
 type Tab = 'viewers' | 'likes';
 
 const StatusInsightsScreen = () => {
@@ -115,11 +125,11 @@ const StatusInsightsScreen = () => {
         <View style={s.userInfo}>
           <Text style={s.userName}>{item.name}</Text>
           <View style={s.timeRow}>
-            <Clock size={11} color="#9e9e9e" />
+            <Clock size={11} color={G.TEXT_SEC} />
             <Text style={s.userTime}>{timeAgo(ts)}</Text>
           </View>
         </View>
-        {tab === 'likes' && <Heart size={16} color="#ef5350" fill="#ef5350" />}
+        {tab === 'likes' && <Heart size={16} color={G.GOLD} fill={G.GOLD} />}
       </View>
     );
   };
@@ -129,7 +139,7 @@ const StatusInsightsScreen = () => {
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-          <ChevronLeft size={28} color="#fff" />
+          <ChevronLeft size={28} color={G.TEXT} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Status Insights</Text>
         <TouchableOpacity onPress={handleDelete} style={s.deleteBtn}>
@@ -157,19 +167,19 @@ const StatusInsightsScreen = () => {
       {/* Summary card */}
       <View style={s.summaryCard}>
         <View style={s.summaryItem}>
-          <Eye size={22} color="#5c6bc0" />
+          <Eye size={22} color={G.GOLD} />
           <Text style={s.summaryCount}>{currentStatus?.viewCount || viewers.length}</Text>
           <Text style={s.summaryLabel}>Views</Text>
         </View>
         <View style={s.divider} />
         <View style={s.summaryItem}>
-          <Heart size={22} color="#ef5350" />
+          <Heart size={22} color={G.GOLD} />
           <Text style={s.summaryCount}>{currentStatus?.likeCount || likes.length}</Text>
           <Text style={s.summaryLabel}>Likes</Text>
         </View>
         <View style={s.divider} />
         <View style={s.summaryItem}>
-          <Clock size={22} color="#78909c" />
+          <Clock size={22} color={G.TEXT_SEC} />
           <Text style={s.summaryCount}>{timeAgo(currentStatus?.createdAt || 0)}</Text>
           <Text style={s.summaryLabel}>Posted</Text>
         </View>
@@ -181,7 +191,7 @@ const StatusInsightsScreen = () => {
           style={[s.tab, tab === 'viewers' && s.tabActive]}
           onPress={() => setTab('viewers')}
         >
-          <Eye size={16} color={tab === 'viewers' ? '#fff' : '#7986cb'} />
+          <Eye size={16} color={tab === 'viewers' ? '#000' : G.TEXT_SEC} />
           <Text style={[s.tabText, tab === 'viewers' && s.tabTextActive]}>
             Viewers ({viewers.length})
           </Text>
@@ -190,7 +200,7 @@ const StatusInsightsScreen = () => {
           style={[s.tab, tab === 'likes' && s.tabActive]}
           onPress={() => setTab('likes')}
         >
-          <Heart size={16} color={tab === 'likes' ? '#fff' : '#ef5350'} />
+          <Heart size={16} color={tab === 'likes' ? '#000' : G.GOLD} fill={tab === 'likes' ? '#000' : 'transparent'} />
           <Text style={[s.tabText, tab === 'likes' && s.tabTextActive]}>
             Likes ({likes.length})
           </Text>
@@ -200,7 +210,7 @@ const StatusInsightsScreen = () => {
       {/* List */}
       {loadingData ? (
         <View style={s.loadingWrap}>
-          <ActivityIndicator size="large" color={colors.primary} />
+          <ActivityIndicator size="large" color={G.GOLD} />
         </View>
       ) : (
         <FlatList
@@ -222,42 +232,44 @@ const StatusInsightsScreen = () => {
 };
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f7fa' },
+  container: { flex: 1, backgroundColor: G.BG },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#1a237e', paddingVertical: 14, paddingHorizontal: 10,
+    backgroundColor: G.BG, paddingVertical: 14, paddingHorizontal: 10,
     paddingTop: Platform.OS === 'android' ? 40 : 14,
-    elevation: 6,
+    elevation: 0,
+    borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
   backBtn: { padding: 4 },
-  headerTitle: { color: '#fff', fontSize: 19, fontWeight: '700' },
-  deleteBtn: { padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
+  headerTitle: { color: G.TEXT, fontSize: 19, fontWeight: '700' },
+  deleteBtn: { padding: 8, backgroundColor: G.GLASS, borderRadius: 20 },
 
   // Status selector
   statusSelector: {
     flexDirection: 'row', justifyContent: 'center', gap: 8,
-    paddingVertical: 12, backgroundColor: '#fff', elevation: 1,
+    paddingVertical: 12, backgroundColor: G.BG,
+    borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
   statusDot: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#e8eaf6', justifyContent: 'center', alignItems: 'center',
+    backgroundColor: G.GLASS, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
-  statusDotActive: { backgroundColor: '#3949ab' },
-  statusDotText: { fontSize: 13, fontWeight: '700', color: '#7986cb' },
-  statusDotTextActive: { color: '#fff' },
+  statusDotActive: { backgroundColor: G.GOLD, borderColor: G.GOLD },
+  statusDotText: { fontSize: 13, fontWeight: '700', color: G.TEXT_SEC },
+  statusDotTextActive: { color: '#000' },
 
   // Summary
   summaryCard: {
     flexDirection: 'row', justifyContent: 'space-around',
-    backgroundColor: '#fff', marginHorizontal: 16, marginVertical: 14,
+    backgroundColor: G.GLASS, marginHorizontal: 16, marginVertical: 14,
     borderRadius: 16, paddingVertical: 20,
-    elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1, shadowRadius: 4,
+    borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
   summaryItem: { alignItems: 'center', gap: 4 },
-  summaryCount: { fontSize: 18, fontWeight: '800', color: '#212121' },
-  summaryLabel: { fontSize: 12, color: '#78909c', fontWeight: '500' },
-  divider: { width: 1, height: '70%', backgroundColor: '#e0e0e0', alignSelf: 'center' },
+  summaryCount: { fontSize: 18, fontWeight: '800', color: G.TEXT },
+  summaryLabel: { fontSize: 12, color: G.TEXT_SEC, fontWeight: '500' },
+  divider: { width: 1, height: '70%', backgroundColor: G.SEPARATOR, alignSelf: 'center' },
 
   // Tabs
   tabBar: {
@@ -266,28 +278,29 @@ const s = StyleSheet.create({
   tab: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 6, paddingVertical: 12, borderRadius: 12,
-    backgroundColor: '#e8eaf6',
+    backgroundColor: G.GLASS,
+    borderWidth: 1, borderColor: G.GLASS_BORDER,
   },
-  tabActive: { backgroundColor: '#3949ab' },
-  tabText: { fontSize: 14, fontWeight: '600', color: '#7986cb' },
-  tabTextActive: { color: '#fff' },
+  tabActive: { backgroundColor: G.GOLD, borderColor: G.GOLD },
+  tabText: { fontSize: 14, fontWeight: '600', color: G.TEXT_SEC },
+  tabTextActive: { color: '#000' },
 
   // List
   listContent: { paddingHorizontal: 16, paddingBottom: 20 },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   userRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#e0e0e0',
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
-  userAvatar: { width: 46, height: 46, borderRadius: 23, marginRight: 14 },
-  placeholderAvatar: { backgroundColor: '#90a4ae', justifyContent: 'center', alignItems: 'center' },
-  placeholderText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  userAvatar: { width: 46, height: 46, borderRadius: 23, marginRight: 14, borderWidth: 2, borderColor: 'rgba(245,197,24,0.35)' },
+  placeholderAvatar: { backgroundColor: 'rgba(245,197,24,0.15)', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: 'rgba(245,197,24,0.35)' },
+  placeholderText: { color: G.GOLD, fontSize: 18, fontWeight: '700' },
   userInfo: { flex: 1 },
-  userName: { fontSize: 15, fontWeight: '600', color: '#212121' },
+  userName: { fontSize: 15, fontWeight: '700', color: G.TEXT },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  userTime: { fontSize: 12, color: '#9e9e9e' },
+  userTime: { fontSize: 12, color: G.TEXT_SEC },
   emptyWrap: { paddingTop: 50, alignItems: 'center' },
-  emptyText: { fontSize: 15, color: '#9e9e9e' },
+  emptyText: { fontSize: 15, color: G.TEXT_SEC },
 });
 
 export default StatusInsightsScreen;

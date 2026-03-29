@@ -8,7 +8,6 @@ import AuthNavigation from './AuthNavigation';
 import MainNavigation from './MainNavigation';
 import SplashScreen from '../screens/Splash/SplashScreen';
 import ScreensNavigation from './ScreensNavigation';
-import IncomingCallOverlay from '../components/calling/IncomingCallOverlay';
 import userStore from '../store/MyStore'; 
 import { validateSession } from '../firebase/Auth';
 
@@ -83,8 +82,6 @@ const RootNavigator = ({ navigation }: any) => {
         <Text style={styles.offlineText}>You are currently offline</Text>
       </Animated.View>
 
-      {/* Global Incoming Call Overlay — renders above all screens */}
-      <IncomingCallOverlay />
     </View>
   );
 };

@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageSquarePlus, Search } from 'lucide-react-native';
 import NotificationService from '../../../services/NotificationService';
 import userStore from '../../../store/MyStore';
@@ -32,8 +33,9 @@ const G = {
 };
 
 const HomeScreen = () => {
-  const { userModelID } = userStore();
+  const { userModelID, setKeyUpdatedAt } = userStore();
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const appState = useRef(AppState.currentState);
   const [chatUsers, setChatUsers] = useState<LocalContact[]>([]);
 
@@ -64,7 +66,8 @@ const HomeScreen = () => {
         await checkAndUpdatePermission();
         const pubKey = await EncryptionService.getContactPublicKey(userModelID);
         if (!pubKey) {
-          await EncryptionService.generateAndStoreKeyPair(userModelID);
+          const result = await EncryptionService.generateAndStoreKeyPair(userModelID);
+          setKeyUpdatedAt(result.keyUpdatedAt);
         }
         MessageSyncService.setOnInboxUpdatedCallback(() => { fetchChatUsers(); });
         MessageSyncService.listenToInbox(userModelID);
@@ -155,9 +158,9 @@ const HomeScreen = () => {
           <Text style={styles.headerTitle}>ChitChat</Text>
           <Text style={styles.headerSub}>{chatUsers.length} conversations</Text>
         </View>
-        <TouchableOpacity style={styles.headerIconBtn} activeOpacity={0.7}>
+        {/* <TouchableOpacity style={styles.headerIconBtn} activeOpacity={0.7}>
           <Search size={20} color={G.GOLD} />
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       {/* Divider */}
@@ -190,7 +193,7 @@ const HomeScreen = () => {
 
       {/* FAB */}
       <TouchableOpacity
-        style={styles.fab}
+        style={[styles.fab, { bottom: Math.max(insets.bottom + 85, 92) }]}
         onPress={() => navigation.navigate('Screens', { screen: 'UserListScreen' })}
         activeOpacity={0.85}
       >
@@ -348,6 +351,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 40,
+    
   },
   emptyIconCircle: {
     width: 90,

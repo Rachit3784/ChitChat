@@ -103,7 +103,7 @@ export default CustomTabBar;
 const styles = StyleSheet.create({
   outerWrapper: {
     position: "absolute",
-    bottom: 0,
+    bottom: 7,
     left: 0,
     right: 0,
     alignItems: "center",
