@@ -1,19 +1,22 @@
 /**
  * CallScreen.tsx — iOS Glassmorphism Redesign
  * Dark glass background · Gold accents · iOS-style call log
+ * UPDATED: Card tap -> Navigate to details · Single Video Call button
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Image, RefreshControl, StatusBar, SafeAreaView, Platform,
+  Image, RefreshControl, StatusBar, SafeAreaView, Platform, Alert
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Phone, Video, PhoneIncoming, PhoneOutgoing,
-  PhoneMissed, Trash2,
+  PhoneMissed, Trash2, CheckCircle2, Circle, X, CheckSquare, 
+  ChevronRight, Info
 } from 'lucide-react-native';
 import CallLogService from '../../../services/calling/CallLogService';
+import CallManageService from '../../../services/calling/CallManageService';
 import { CallLog } from '../../../localDB/LocalDBService';
 import userStore from '../../../store/MyStore';
 
@@ -39,9 +42,15 @@ const CallScreen = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { userModelID } = userStore();
+  
+  // --- States ---
   const [logs, setLogs] = useState<CallLog[]>([]);
   const [filter, setFilter] = useState<FilterTab>('all');
   const [refreshing, setRefreshing] = useState(false);
+  
+  // --- Selection Mode States ---
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const loadLogs = useCallback(() => {
     const all = CallLogService.getCallLogs(100);
@@ -49,39 +58,75 @@ const CallScreen = () => {
   }, []);
 
   useFocusEffect(
-    useCallback(() => { loadLogs(); }, [loadLogs])
+    useCallback(() => { 
+        loadLogs(); 
+        return () => {
+            setIsSelectionMode(false);
+            setSelectedIds(new Set());
+        };
+    }, [loadLogs])
   );
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    if (userModelID) await CallLogService.syncFromFirestore(userModelID);
+    if (userModelID) {
+        console.log("[CallScreen] Pull-to-refresh: Syncing history...");
+        await CallLogService.syncFromFirestore(userModelID);
+    }
     loadLogs();
     setRefreshing(false);
   };
 
-  const handleClearLogs = () => {
-    CallLogService.clearCallLogs();
-    setLogs([]);
+  const toggleSelection = (id: string) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+      if (newSelected.size === 0) setIsSelectionMode(false);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
   };
 
-  const initiateCall = (log: CallLog, type: 'video' | 'audio') => {
+  const handleLongPress = (id: string) => {
+    if (!isSelectionMode) {
+      setIsSelectionMode(true);
+      const newSelected = new Set();
+      newSelected.add(id);
+      setSelectedIds(newSelected);
+    }
+  };
+
+  const goToDetails = (log: CallLog) => {
+    if (isSelectionMode) {
+        toggleSelection(log.id);
+        return;
+    }
     navigation.navigate('Screens', {
-      screen: 'OutgoingCallScreen',
-      params: {
-        contactUid: log.contactUid,
-        contactName: log.contactName,
-        contactPhoto: log.contactPhoto,
-        callType: type,
-      },
+        screen: 'CallDetailScreen',
+        params: { log }
     });
   };
 
-  const filteredLogs = filter === 'missed' ? logs.filter(l => l.status === 'missed') : logs;
+  const startQuickCall = (log: CallLog) => {
+    const senderData = userStore.getState().userModel;
+    CallManageService.initiateCall(
+      senderData,
+      log.contactUid,
+      log.contactName,
+      log.contactPhoto,
+      'video'
+    );
+  };
+
+  const filteredLogs = useMemo(() => {
+     return filter === 'missed' ? logs.filter(l => l.status === 'missed') : logs;
+  }, [logs, filter]);
 
   const getDirectionIcon = (log: CallLog) => {
-    if (log.status === 'missed') return <PhoneMissed size={15} color={G.RED} />;
-    if (log.direction === 'incoming') return <PhoneIncoming size={15} color={G.GREEN} />;
-    return <PhoneOutgoing size={15} color={G.GOLD} />;
+    if (log.status === 'missed') return <PhoneMissed size={13} color={G.RED} />;
+    if (log.direction === 'incoming') return <ArrowDownLeft size={13} color={G.GREEN} />;
+    return <ArrowUpRight size={13} color={G.GOLD} />;
   };
 
   const getDirectionColor = (log: CallLog): string => {
@@ -110,71 +155,69 @@ const CallScreen = () => {
 
   const missedCount = logs.filter(l => l.status === 'missed').length;
 
-  const renderItem = ({ item }: { item: CallLog }) => (
-    <TouchableOpacity
-      style={styles.logItem}
-      onPress={() => initiateCall(item, item.callType as any)}
-      activeOpacity={0.7}
-    >
-      {/* Avatar */}
-      <View style={styles.avatarContainer}>
-        {item.contactPhoto ? (
-          <Image source={{ uri: item.contactPhoto }} style={styles.avatar} />
-        ) : (
-          <View style={[styles.avatar, styles.avatarPlaceholder]}>
-            <Text style={styles.avatarInitial}>
-              {item.contactName?.charAt(0)?.toUpperCase()}
-            </Text>
+  const renderItem = ({ item }: { item: CallLog }) => {
+    const isSelected = selectedIds.has(item.id);
+    const statusColor = getDirectionColor(item);
+    
+    return (
+      <TouchableOpacity
+        style={[styles.logItem, isSelected && styles.selectedItem]}
+        onPress={() => goToDetails(item)}
+        onLongPress={() => handleLongPress(item.id)}
+        activeOpacity={0.7}
+      >
+        {/* Selection indicator */}
+        {isSelectionMode && (
+          <View style={styles.selectionIndicator}>
+             {isSelected ? <CheckCircle2 size={22} color={G.GOLD} /> : <Circle size={22} color={G.TEXT_MUTED} />}
           </View>
         )}
-        {/* Type badge */}
-        <View style={[
-          styles.typeBadge,
-          { backgroundColor: item.callType === 'video' ? 'rgba(245,197,24,0.25)' : 'rgba(48,209,88,0.25)' },
-        ]}>
-          {item.callType === 'video'
-            ? <Video size={9} color={G.GOLD} />
-            : <Phone size={9} color={G.GREEN} />
-          }
-        </View>
-      </View>
 
-      {/* Info */}
-      <View style={styles.logInfo}>
-        <Text style={styles.contactName}>{item.contactName}</Text>
-        <View style={styles.statusRow}>
-          {getDirectionIcon(item)}
-          <Text style={[styles.statusText, { color: getDirectionColor(item) }]}>
-            {' '}{getStatusLabel(item)}
-          </Text>
-          {item.duration > 0 && (
-            <Text style={styles.durationText}>
-              {' · '}{CallLogService.formatDuration(item.duration)}
-            </Text>
+        {/* Avatar */}
+        <View style={styles.avatarContainer}>
+          {item.contactPhoto ? (
+            <Image source={{ uri: item.contactPhoto }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <Text style={styles.avatarInitial}>
+                {item.contactName?.charAt(0)?.toUpperCase()}
+              </Text>
+            </View>
           )}
         </View>
-      </View>
 
-      {/* Right side */}
-      <View style={styles.rightSection}>
-        <Text style={styles.timeText}>{formatTime(item.startedAt)}</Text>
-        <View style={styles.callBtns}>
-          <TouchableOpacity
-            style={styles.quickCallBtn}
-            onPress={() => initiateCall(item, 'audio')}
-          >
-            <Phone size={15} color={G.GOLD} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.quickCallBtn, { marginLeft: 6 }]}
-            onPress={() => initiateCall(item, 'video')}
-          >
-            <Video size={15} color={G.GOLD} />
-          </TouchableOpacity>
+        {/* Info */}
+        <View style={styles.logInfo}>
+          <Text style={[styles.contactName, { color: item.status === 'missed' ? G.RED : G.TEXT }]}>
+            {item.contactName}
+          </Text>
+          <View style={styles.statusRow}>
+            {item.status === 'missed' ? <PhoneMissed size={12} color={G.RED} /> : (
+                item.direction === 'outgoing' ? <ArrowUpRight size={12} color={G.GOLD} /> : <ArrowDownLeft size={12} color={G.GREEN} />
+            )}
+            <Text style={[styles.statusText, { color: G.TEXT_MUTED }]}>
+              {' '}{getStatusLabel(item)}
+            </Text>
+          </View>
         </View>
-      </View>
-    </TouchableOpacity>
-  );
+
+        {/* Right side */}
+        {!isSelectionMode ? (
+            <View style={styles.rightSection}>
+                <Text style={styles.timeText}>{formatTime(item.startedAt)}</Text>
+                <TouchableOpacity 
+                    style={styles.infoBtn} 
+                    onPress={() => startQuickCall(item)}
+                >
+                    <Video size={20} color={G.GOLD} />
+                </TouchableOpacity>
+            </View>
+        ) : (
+            <ChevronRight size={18} color={G.TEXT_MUTED} />
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -183,43 +226,51 @@ const CallScreen = () => {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Calls</Text>
-          <Text style={styles.headerSub}>{logs.length} in history</Text>
+          <Text style={styles.headerTitle}>{isSelectionMode ? `${selectedIds.size} Selected` : 'Calls'}</Text>
+          {!isSelectionMode && <Text style={styles.headerSub}>{logs.length} in history</Text>}
         </View>
-        {logs.length > 0 && (
-          <TouchableOpacity style={styles.clearBtn} onPress={handleClearLogs}>
-            <Trash2 size={18} color={G.RED} />
-          </TouchableOpacity>
-        )}
+        
+        <View style={styles.headerActions}>
+          {isSelectionMode ? (
+            <>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => setSelectedIds(new Set(filteredLogs.map(l => l.id)))}>
+                <CheckSquare size={19} color={G.GOLD} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, { marginLeft: 12 }]} onPress={() => {
+                Alert.alert("Delete", "Delete selected call records?", [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Delete", style: "destructive", onPress: () => {
+                        CallLogService.deleteLogs(Array.from(selectedIds));
+                        setIsSelectionMode(false);
+                        setSelectedIds(new Set());
+                        loadLogs();
+                    }}
+                ]);
+              }}>
+                <Trash2 size={19} color={G.RED} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, { marginLeft: 12 }]} onPress={() => setIsSelectionMode(false)}>
+                <X size={19} color={G.TEXT} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            logs.length > 0 && (
+              <TouchableOpacity style={styles.clearBtn} onPress={() => {
+                 Alert.alert("Clear History", "This will wipe your entire local call history.", [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Clear All", style: "destructive", onPress: () => {
+                        CallLogService.clearCallLogs();
+                        setLogs([]);
+                    }}
+                 ]);
+              }}>
+                <Trash2 size={18} color={G.RED} />
+              </TouchableOpacity>
+            )
+          )}
+        </View>
       </View>
       <View style={styles.headerDivider} />
-
-      {/* Filter Pills */}
-      <View style={styles.filterRow}>
-        <TouchableOpacity
-          style={[styles.filterPill, filter === 'all' && styles.filterPillActive]}
-          onPress={() => setFilter('all')}
-          activeOpacity={0.75}
-        >
-          <Text style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>
-            All
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterPill, filter === 'missed' && styles.filterPillMissed]}
-          onPress={() => setFilter('missed')}
-          activeOpacity={0.75}
-        >
-          <Text style={[styles.filterText, filter === 'missed' && styles.filterTextMissed]}>
-            Missed
-          </Text>
-          {missedCount > 0 && (
-            <View style={styles.missedBadge}>
-              <Text style={styles.missedBadgeText}>{missedCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
 
       {/* List */}
       {filteredLogs.length === 0 ? (
@@ -227,12 +278,8 @@ const CallScreen = () => {
           <View style={styles.emptyIconCircle}>
             <Phone size={36} color={G.GOLD} />
           </View>
-          <Text style={styles.emptyTitle}>
-            {filter === 'missed' ? 'No missed calls' : 'No call history'}
-          </Text>
-          <Text style={styles.emptySubtitle}>
-            {filter === 'missed' ? 'You have no missed calls' : 'Start a call from a chat'}
-          </Text>
+          <Text style={styles.emptyTitle}>No call history</Text>
+          <Text style={styles.emptySubtitle}>Your recent calls will appear here</Text>
         </View>
       ) : (
         <FlatList
@@ -241,123 +288,79 @@ const CallScreen = () => {
           renderItem={renderItem}
           contentContainerStyle={[styles.listContent, { paddingBottom: Math.max(insets.bottom + 85, 100) }]}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={G.GOLD}
-              colors={[G.GOLD]}
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={G.GOLD} colors={[G.GOLD]} />
           }
           showsVerticalScrollIndicator={false}
+          extraData={selectedIds}
         />
       )}
     </SafeAreaView>
   );
 };
 
+// --- Helper Icons (Lucide missing some arrows) ---
+const ArrowUpRight = ({ size, color }: any) => (
+    <View style={{ transform: [{ rotate: '45deg' }] }}>
+        <Phone size={size} color={color} />
+    </View>
+);
+const ArrowDownLeft = ({ size, color }: any) => (
+    <View style={{ transform: [{ rotate: '225deg' }] }}>
+        <Phone size={size} color={color} />
+    </View>
+);
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: G.BG },
 
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 20 : 10,
-    paddingBottom: 14,
-    height : 90
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingTop: Platform.OS === 'android' ? 20 : 10,
+    paddingBottom: 14, height : 110
   },
   headerTitle: {marginTop : 20, fontSize: 28, fontWeight: '800', color: G.TEXT, letterSpacing: -0.5 },
   headerSub: { fontSize: 13, color: G.TEXT_SEC, marginTop: 2, fontWeight: '500' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', marginTop: 20 },
+  actionBtn: { padding: 6 },
   clearBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: 'rgba(255,69,58,0.12)',
-    borderWidth: 1, borderColor: 'rgba(255,69,58,0.25)',
-    alignItems: 'center', justifyContent: 'center',
+    width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,69,58,0.1)',
+    borderWidth: 1, borderColor: 'rgba(255,69,58,0.2)', alignItems: 'center', justifyContent: 'center',
   },
   headerDivider: { height: 1, backgroundColor: G.SEPARATOR },
-
-  filterRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  filterPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: G.GLASS,
-    borderWidth: 1,
-    borderColor: G.GLASS_BORDER,
-    gap: 6,
-  },
-  filterPillActive: {
-    backgroundColor: G.GOLD_DIM,
-    borderColor: G.GOLD_BORDER,
-  },
-  filterPillMissed: {
-    backgroundColor: 'rgba(255,69,58,0.12)',
-    borderColor: 'rgba(255,69,58,0.25)',
-  },
-  filterText: { fontSize: 14, fontWeight: '600', color: G.TEXT_SEC },
-  filterTextActive: { color: G.GOLD },
-  filterTextMissed: { color: G.RED },
-  missedBadge: {
-    backgroundColor: G.RED, borderRadius: 10,
-    minWidth: 18, height: 18, alignItems: 'center',
-    justifyContent: 'center', paddingHorizontal: 4,
-  },
-  missedBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
   listContent: { paddingBottom: 100 },
 
   logItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 12,
+    paddingHorizontal: 16, paddingVertical: 14,
     borderBottomWidth: 1, borderBottomColor: G.SEPARATOR,
   },
+  selectedItem: { backgroundColor: 'rgba(245,197,24,0.06)' },
+  selectionIndicator: { marginRight: 15 },
 
-  avatarContainer: { marginRight: 14, position: 'relative' },
-  avatar: { width: 50, height: 50, borderRadius: 25, borderWidth: 1.5, borderColor: G.GLASS_BORDER },
-  avatarPlaceholder: {
-    backgroundColor: 'rgba(245,197,24,0.12)',
-    alignItems: 'center', justifyContent: 'center',
-  },
+  avatarContainer: { marginRight: 15 },
+  avatar: { width: 52, height: 52, borderRadius: 26, borderWidth: 1, borderColor: G.GLASS_BORDER },
+  avatarPlaceholder: { backgroundColor: G.GOLD_DIM, alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { color: G.GOLD, fontSize: 20, fontWeight: '700' },
-  typeBadge: {
-    position: 'absolute', bottom: -2, right: -2,
-    width: 20, height: 20, borderRadius: 10,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: G.BG,
-  },
 
   logInfo: { flex: 1 },
-  contactName: { fontSize: 16, fontWeight: '600', color: G.TEXT, marginBottom: 3 },
+  contactName: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
   statusRow: { flexDirection: 'row', alignItems: 'center' },
   statusText: { fontSize: 12, fontWeight: '500' },
-  durationText: { fontSize: 12, color: G.TEXT_MUTED },
 
-  rightSection: { alignItems: 'flex-end', marginLeft: 8 },
-  timeText: { fontSize: 11, color: G.TEXT_MUTED, marginBottom: 6 },
-  callBtns: { flexDirection: 'row' },
-  quickCallBtn: {
-    padding: 7, borderRadius: 16,
-    backgroundColor: G.GOLD_DIM,
-    borderWidth: 1, borderColor: G.GOLD_BORDER,
+  rightSection: { alignItems: 'center', flexDirection: 'row', gap: 12 },
+  timeText: { fontSize: 12, color: G.TEXT_MUTED },
+  infoBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: G.GOLD_DIM,
+    borderWidth: 1, borderColor: G.GOLD_BORDER, alignItems: 'center', justifyContent: 'center',
   },
 
-  emptyContainer: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40,
-  },
+  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
   emptyIconCircle: {
-    width: 90, height: 90, borderRadius: 45,
-    backgroundColor: G.GOLD_DIM, borderWidth: 1, borderColor: G.GOLD_BORDER,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 24,
+    width: 80, height: 80, borderRadius: 40, backgroundColor: G.GOLD_DIM,
+    borderWidth: 1, borderColor: G.GOLD_BORDER, alignItems: 'center', justifyContent: 'center', marginBottom: 20,
   },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: G.TEXT, textAlign: 'center', marginBottom: 8 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: G.TEXT, textAlign: 'center', marginBottom: 6 },
   emptySubtitle: { fontSize: 14, color: G.TEXT_SEC, textAlign: 'center' },
 });
 

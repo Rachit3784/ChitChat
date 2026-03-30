@@ -5,6 +5,16 @@ import firestore from '@react-native-firebase/firestore';
 import notifee, { AndroidImportance } from '@notifee/react-native';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, Volume2, VolumeX } from 'lucide-react-native';
 import CallManageService from '../../services/calling/CallManageService';
+import CallLogService from '../../services/calling/CallLogService';
+import userStore from '../../store/MyStore';
+
+// Standard Audio Manager for WebRTC
+let InCallManager: any = null;
+try {
+  InCallManager = require('react-native-incall-manager').default;
+} catch (e) {
+  console.warn("InCallManager not found. Audio routing may be poor. Please run: npm install react-native-incall-manager");
+}
 
 const { width, height } = Dimensions.get('window');
 
@@ -16,10 +26,11 @@ const CallActiveScreen = ({ route, navigation }: any) => {
   const localStreamRef = useRef<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOnState, setIsSpeakerOn] = useState(true);
   const [isCameraOff, setIsCameraOff] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [callDuration, setCallDuration] = useState(0);
+  const contactRef = useRef<any>(null); // To store name/photo for logging
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -27,6 +38,12 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       timer = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
+      
+      // Start Audio Session when connected
+      if (InCallManager) {
+        InCallManager.start({ media: 'video' });
+        InCallManager.setSpeakerphoneOn(true);
+      }
     }
     return () => {
       if (timer) clearInterval(timer);
@@ -45,6 +62,8 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
     ]
   }));
   const remoteCandidatesBuffer = useRef<any[]>([]);
@@ -54,35 +73,24 @@ const CallActiveScreen = ({ route, navigation }: any) => {
     let isMounted = true;
     CallManageService.isBusy = true;
 
-    // Phase 4: Foreground Service Notification
     const showNotice = async () => {
-      await notifee.cancelNotification(callId); // Ensure ringing is strictly wiped
-      
+      await notifee.cancelNotification(callId);
       const channelId = await notifee.createChannel({
         id: 'ongoing-calls',
         name: 'Ongoing Calls',
         importance: AndroidImportance.LOW,
-        vibration: false,
       });
-
       await notifee.displayNotification({
         id: callId,
         title: 'Ongoing Call',
-        body: 'Audio/Video call in progress',
-        data: { type: 'ongoing_call', callId: callId },
-        android: {
-          channelId: channelId,
-          asForegroundService: true,
-          ongoing: true,
-          pressAction: { id: 'default', launchActivity: 'default' },
-        }
+        body: 'Call in progress',
+        android: { channelId, asForegroundService: true, ongoing: true }
       });
     };
     showNotice();
 
     const setupWebRTC = async () => {
       try {
-        // 1. Get Local Stream
         const stream: any = await mediaDevices.getUserMedia({
           audio: true,
           video: true,
@@ -96,7 +104,6 @@ const CallActiveScreen = ({ route, navigation }: any) => {
           pc.current.addTrack(track, stream);
         });
 
-        // 2. Event Handlers
         pc.current.ontrack = (event: any) => {
           if (isMounted && event.streams[0]) {
             setRemoteStream(event.streams[0]);
@@ -105,14 +112,16 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         };
 
         pc.current.oniceconnectionstatechange = () => {
-            console.log("ICE Connection State:", pc.current.iceConnectionState);
-            if (pc.current.iceConnectionState === 'disconnected') {
-                setConnectionStatus('Reconnecting...');
-            }
+             const state = pc.current.iceConnectionState;
+             console.log("[WebRTC] ICE State:", state);
+             if (state === 'connected' || state === 'completed') {
+                setConnectionStatus('Connected');
+             } else if (state === 'failed') {
+                setConnectionStatus('Connection Failed');
+             }
         };
 
         const callDoc = firestore().collection('calls').doc(callId);
-
         pc.current.onicecandidate = (event: any) => {
           if (event.candidate) {
             callDoc.collection(isCaller ? 'callerCandidates' : 'receiverCandidates')
@@ -120,36 +129,28 @@ const CallActiveScreen = ({ route, navigation }: any) => {
           }
         };
 
-        // 3. Negotiation Logic (Phase 4 Cleanup)
         if (isCaller) {
           const offer = await pc.current.createOffer();
           await pc.current.setLocalDescription(offer);
           await callDoc.update({ offer: { sdp: offer.sdp, type: offer.type } });
 
-          // Listen for Answer
           const unsubAnswer = callDoc.onSnapshot(doc => {
             const data = doc.data();
             if (data?.answer && pc.current.signalingState === 'have-local-offer') {
-              const answer = new RTCSessionDescription(data.answer);
-              pc.current.setRemoteDescription(answer).then(() => {
+              pc.current.setRemoteDescription(new RTCSessionDescription(data.answer)).then(() => {
                 isRemoteDescriptionSet.current = true;
                 processBufferedCandidates();
               });
             }
           });
 
-          // Listen for ICE
           const unsubIce = callDoc.collection('receiverCandidates').onSnapshot(snap => {
             snap.docChanges().forEach(change => {
-              if (change.type === 'added') {
-                handleRemoteCandidate(change.doc.data());
-              }
+              if (change.type === 'added') handleRemoteCandidate(change.doc.data());
             });
           });
           return () => { unsubAnswer(); unsubIce(); };
-
         } else {
-          // Listen for Offer
           const unsubOffer = callDoc.onSnapshot(async doc => {
             const data = doc.data();
             if (data?.offer && pc.current.signalingState === 'stable' && !isRemoteDescriptionSet.current) {
@@ -162,17 +163,14 @@ const CallActiveScreen = ({ route, navigation }: any) => {
             }
           });
 
-          // Listen for ICE
           const unsubIce = callDoc.collection('callerCandidates').onSnapshot(snap => {
             snap.docChanges().forEach(change => {
-              if (change.type === 'added') {
-                handleRemoteCandidate(change.doc.data());
-              }
+              if (change.type === 'added') handleRemoteCandidate(change.doc.data());
             });
           });
           return () => { unsubOffer(); unsubIce(); };
         }
-      } catch (e) { console.error("WebRTC Error:", e); }
+      } catch (e) { console.error("WebRTC Setup Error:", e); }
     };
 
     const handleRemoteCandidate = (candidateData: any) => {
@@ -192,9 +190,23 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
     setupWebRTC();
 
-    // Listen for Hangup
     const unsubStatus = firestore().collection('calls').doc(callId).onSnapshot(doc => {
-      const status = doc.data()?.status;
+      if (!doc.exists) return;
+      const data = doc.data();
+      const status = data?.status;
+
+      // Store contact info for logging
+      if (!contactRef.current && data) {
+         const isMeCaller = data.callerId === userStore.getState().userModelID;
+         contactRef.current = {
+            uid: isMeCaller ? data.receiverId : data.callerId,
+            name: isMeCaller ? (data.receiverName || 'User') : data.callerName,
+            photo: isMeCaller ? data.receiverPhoto : data.callerPhoto,
+            type: data.type || 'audio',
+            direction: isMeCaller ? 'outgoing' : 'incoming'
+         };
+      }
+
       if (['ended', 'cancelled', 'declined', 'missed'].includes(status)) {
         cleanupAndExit();
       }
@@ -208,8 +220,23 @@ const CallActiveScreen = ({ route, navigation }: any) => {
   }, []);
 
   const cleanup = () => {
+    // Save to local log before cleaning up
+    if (contactRef.current) {
+        CallLogService.saveCallLog({
+            id: callId,
+            contactUid: contactRef.current.uid,
+            contactName: contactRef.current.name,
+            contactPhoto: contactRef.current.photo || null,
+            callType: contactRef.current.type,
+            direction: contactRef.current.direction,
+            status: 'completed',
+            startedAt: Date.now() - (callDuration * 1000),
+            duration: callDuration
+        });
+    }
+
+    if (InCallManager) InCallManager.stop();
     if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t: any) => t.stop());
-    else if (localStream) localStream.getTracks().forEach((t: any) => t.stop());
     pc.current.close();
     notifee.stopForegroundService();
     notifee.cancelNotification(callId);
@@ -228,11 +255,25 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
   // --- Interaction Handlers ---
   const toggleMute = () => {
-    if (localStream) {
-      const newMuted = !isMuted;
-      localStream.getAudioTracks().forEach((track: any) => (track.enabled = !newMuted));
-      setIsMuted(newMuted);
-    }
+    try {
+      const stream = localStreamRef.current || localStream;
+      if (stream) {
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          const newMuted = !isMuted;
+          audioTracks.forEach((track: any) => (track.enabled = !newMuted));
+          setIsMuted(newMuted);
+        }
+      }
+    } catch (e) { console.error("Mute Toggle Error:", e); }
+  };
+
+  const toggleSpeaker = () => {
+     if (InCallManager) {
+        const nextSpeakerState = !isSpeakerOnState;
+        InCallManager.setSpeakerphoneOn(nextSpeakerState);
+        setIsSpeakerOn(nextSpeakerState);
+     }
   };
 
   const toggleCamera = () => {
@@ -245,7 +286,6 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* HEADER INFO */}
       <View style={styles.headerBlock}>
         <Text style={styles.timerText}>
           {connectionStatus === 'Connected' ? formatDuration(callDuration) : connectionStatus}
@@ -253,7 +293,6 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         {isMuted && <Text style={styles.mutedWarning}>Microphone Muted</Text>}
       </View>
 
-      {/* REMOTE VIDEO */}
       <View style={styles.remoteWrapper}>
         {remoteStream ? (
           <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} objectFit="cover" />
@@ -264,10 +303,9 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         )}
       </View>
 
-      {/* LOCAL VIDEO (PIP) */}
       <View style={styles.localWrapper}>
         {localStream && !isCameraOff ? (
-          <RTCView streamURL={localStream.toURL()} style={styles.localVideo} objectFit="cover" />
+          <RTCView streamURL={localStream.toURL()} style={styles.localVideo} objectFit="cover" zOrder={1} mirror={true} />
         ) : (
           <View style={[styles.localVideo, { backgroundColor: '#444', justifyContent: 'center', alignItems: 'center' }]}>
              <VideoOff color="#fff" size={24} />
@@ -275,10 +313,19 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         )}
       </View>
 
-      {/* CONTROL BAR */}
       <View style={styles.controlBar}>
         <TouchableOpacity style={[styles.btn, isMuted && styles.btnActive]} onPress={toggleMute}>
           {isMuted ? <MicOff color="#fff" size={28} /> : <Mic color="#fff" size={28} />}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.btn, !isSpeakerOnState && styles.btnActive]} onPress={() => {
+            if (InCallManager) {
+                const next = !isSpeakerOnState;
+                InCallManager.setSpeakerphoneOn(next);
+                setIsSpeakerOn(next);
+            }
+        }}>
+          {isSpeakerOnState ? <Volume2 color="#fff" size={28} /> : <VolumeX color="#fff" size={28} />}
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.btn, isCameraOff && styles.btnActive]} onPress={toggleCamera}>
@@ -295,15 +342,12 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#1c1c1e' },
-  
-  // Header Info
   headerBlock: {
-    position: 'absolute', top: Platform.OS === 'android' ? 50 : 60, alignSelf: 'center', zIndex: 10,
+    position: 'absolute', top: 50, alignSelf: 'center', zIndex: 10,
     alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8
   },
   timerText: { color: '#fff', fontSize: 18, fontWeight: '600', letterSpacing: 1 },
   mutedWarning: { color: '#ff3b30', fontSize: 12, fontWeight: '700', marginTop: 2 },
-
   remoteWrapper: { flex: 1, backgroundColor: '#000' },
   remoteVideo: { width: '100%', height: '100%' },
   placeholder: { flex: 1, justifyContent: 'center', alignItems: 'center' },
@@ -312,23 +356,22 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 60, right: 20,
     width: 100, height: 150, borderRadius: 16,
     overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
-    elevation: 10, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 10
+    zIndex: 100
   },
   localVideo: { width: '100%', height: '100%' },
   controlBar: {
     position: 'absolute', bottom: 40, alignSelf: 'center',
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: 'rgba(58, 58, 60, 0.8)',
-    paddingHorizontal: 20, paddingVertical: 15, borderRadius: 40,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 15, paddingVertical: 15, borderRadius: 45,
   },
   btn: {
-    width: 60, height: 60, borderRadius: 30,
+    width: 54, height: 54, borderRadius: 27,
     justifyContent: 'center', alignItems: 'center',
-    marginHorizontal: 10, backgroundColor: 'rgba(255,255,255,0.1)'
+    marginHorizontal: 8, backgroundColor: 'rgba(255,255,255,0.1)'
   },
   btnActive: { backgroundColor: '#ff3b30' },
-  endBtn: { backgroundColor: '#eb5545', width: 70, height: 70, borderRadius: 35 }
+  endBtn: { backgroundColor: '#eb5545', width: 64, height: 64, borderRadius: 32 }
 });
 
 export default CallActiveScreen;

@@ -59,6 +59,14 @@ class EncryptionService {
   }
 
   /**
+   * Checks if the user's private key exists locally.
+   */
+  public async hasLocalPrivateKey(uid: string): Promise<boolean> {
+    const pk = await this.getMyPrivateKey(uid);
+    return !!pk;
+  }
+
+  /**
    * Retrieves a contact's public key from Firestore.
    */
   public async getContactPublicKey(contactUid: string): Promise<Uint8Array | null> {

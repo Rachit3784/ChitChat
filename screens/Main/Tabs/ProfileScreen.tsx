@@ -81,6 +81,8 @@ const ProfileScreen = () => {
         text: 'Logout', style: 'destructive',
         onPress: async () => {
           try {
+            // Set global sync stamp so previous history is permanently ignored on next login
+            LocalDBService.setGlobalDeletedAt(Date.now());
             await logout();
             navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
           } catch {
@@ -307,6 +309,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,69,58,0.25)',
     gap: 10,
+    marginBottom : 20
   },
   logoutText: { color: G.RED, fontSize: 16, fontWeight: '700' },
 });

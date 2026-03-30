@@ -12,8 +12,14 @@ class MessageSyncService {
   private activeMyUid: string | null = null;
   private messageListeners: Map<string, boolean> = new Map();
   private onMessageCallback: ((chatId: string) => void) | null = null;
-  private onInboxUpdatedCallback: (() => void) | null = null;
+  private connectivityListener: any = null;
+  public onInboxUpdatedCallback: (() => void) | null = null;
+  
+  // Cache derived shared secrets to avoid repeated ECDH/Firestore lookups on every message
+  private sharedSecretCache = new Map<string, Uint8Array>();
+
   private sessionStartTime: number = 0;
+  private globalDeletedAt: number = 0;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -44,6 +50,8 @@ class MessageSyncService {
   public listenToInbox(myUid: string) {
     this.sessionStartTime = Date.now();
     this.activeMyUid = myUid;
+    this.globalDeletedAt = LocalDBService.getGlobalDeletedAt();
+    
     const ref = database().ref(`inbox/${myUid}`);
     ref.off();
 
@@ -58,6 +66,18 @@ class MessageSyncService {
         return;
       }
 
+      // ── Global & Contact Stamp Check ────────────────────
+      if (data.timestamp && data.timestamp < this.globalDeletedAt) {
+        console.log(`[MSS] Skipping globally wiped inbox entry for ${contactUid}`);
+        return;
+      }
+
+      const deletedAt = LocalDBService.getChatDeletedAt(contactUid);
+      if (data.timestamp && data.timestamp < deletedAt) {
+        console.log(`[MSS] Skipping wiped inbox entry for ${contactUid} (Stamp: ${deletedAt}, Msg: ${data.timestamp})`);
+        return;
+      }
+
       const chatId = this.getChatId(myUid, contactUid);
       const isCurrentlyInChat = this.activeChatId === chatId;
 
@@ -65,10 +85,12 @@ class MessageSyncService {
       // If we received an unread increment but we are actively looking at this chat,
       // instantly zero it out in RTDB and locally.
       let unread = data.unreadCount || 0;
-      if (unread > 0 && isCurrentlyInChat) {
+      if (isCurrentlyInChat) {
         unread = 0;
-        // Instantly write back 0 to RTDB (Atomic overwrite)
-        database().ref(`inbox/${myUid}/${contactUid}`).update({ unreadCount: 0 });
+        // Instantly write back 0 to RTDB (Atomic overwrite) if it's currently > 0
+        if (data.unreadCount > 0) {
+          database().ref(`inbox/${myUid}/${contactUid}`).update({ unreadCount: 0 });
+        }
       }
 
       // ── Decrypt the last message preview ─────────────────────────────────
@@ -77,17 +99,25 @@ class MessageSyncService {
 
       if (hasCipher) {
         try {
-          const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
-          if (contactPubKey) {
-            const sharedSecret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
-            if (sharedSecret) {
-              const result = EncryptionService.decrypt(
-                { cipherText: data.lastMessageCipherText, iv: data.lastMessageIv },
-                sharedSecret
-              );
-              if (result) {
-                decryptedPreview = result;
+          let sharedSecret = this.sharedSecretCache.get(chatId);
+          if (!sharedSecret) {
+            const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
+            if (contactPubKey) {
+              const secret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
+              if (secret) {
+                sharedSecret = secret;
+                this.sharedSecretCache.set(chatId, sharedSecret);
               }
+            }
+          }
+
+          if (sharedSecret) {
+            const result = EncryptionService.decrypt(
+              { cipherText: data.lastMessageCipherText, iv: data.lastMessageIv },
+              sharedSecret
+            );
+            if (result) {
+              decryptedPreview = result;
             }
           }
         } catch (decErr) {
@@ -146,6 +176,35 @@ class MessageSyncService {
     ref.on('child_changed', handleInboxEntry);
   }
 
+  /**
+   * Scans the RTDB inbox once on login/init.
+   * Resets unreadCount to 0 for any entries older than the new encryption epoch (keyUpdatedAt).
+   * This fixes the "count of 6, but 1 message" UI inconsistency.
+   */
+  public async cleanseInboxEpoch(myUid: string, epoch: number) {
+    if (!epoch) return;
+    console.log(`[MSS] Cleansing RTDB inbox for epoch: ${epoch}`);
+    try {
+      const snap = await database().ref(`inbox/${myUid}`).once('value');
+      const data = snap.val();
+      if (!data) return;
+
+      const updates: any = {};
+      Object.entries(data).forEach(([contactUid, entry]: [string, any]) => {
+        if (entry.timestamp && entry.timestamp < epoch && entry.unreadCount > 0) {
+          updates[`/inbox/${myUid}/${contactUid}/unreadCount`] = 0;
+          console.log(`[MSS] Epoch cleanse: Zeroed unread for ${contactUid}`);
+        }
+      });
+
+      if (Object.keys(updates).length > 0) {
+        await database().ref().update(updates);
+      }
+    } catch (err) {
+      console.error('[MSS] cleanseInboxEpoch error:', err);
+    }
+  }
+
   // ── Chat Message Listener ──────────────────────────────────────────────────
 
   /**
@@ -156,16 +215,21 @@ class MessageSyncService {
     const chatId = this.getChatId(myUid, contactUid);
     if (this.messageListeners.has(chatId)) return;
 
-    const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
-    if (!contactPubKey) {
-      console.warn(`[MSS] No public key for ${contactUid}, skipping listener.`);
-      return;
-    }
-
-    const sharedSecret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
+    let sharedSecret = this.sharedSecretCache.get(chatId);
     if (!sharedSecret) {
-      console.warn(`[MSS] No shared secret for ${contactUid}.`);
-      return;
+      const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
+      if (!contactPubKey) {
+        console.warn(`[MSS] No public key for ${contactUid}, skipping listener.`);
+        return;
+      }
+
+      const secret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
+      if (!secret) {
+        console.warn(`[MSS] No shared secret for ${contactUid}.`);
+        return;
+      }
+      sharedSecret = secret;
+      this.sharedSecretCache.set(chatId, sharedSecret);
     }
 
     const keyUpdatedAt = userStore.getState().keyUpdatedAt || 0;
@@ -183,6 +247,24 @@ class MessageSyncService {
       const msgId = snapshot.key;
       if (!data || !msgId) return;
 
+      // Check if user has explicitly deleted this message for themselves (Tombstone)
+      if (LocalDBService.isMessageDeleted(msgId)) {
+        console.log(`[MSS] Skipping blacklisted msg: ${msgId.slice(0, 8)}`);
+        return;
+      }
+
+      // ── Global & Contact Stamp Check ──────────────────────────────────────
+      if (data.timestamp && data.timestamp < this.globalDeletedAt) {
+        console.log(`[MSS] Skipping globally wiped message: ${msgId.slice(0, 8)}`);
+        return;
+      }
+
+      const deletedAt = LocalDBService.getChatDeletedAt(contactUid);
+      if (data.timestamp && data.timestamp < deletedAt) {
+        console.log(`[MSS] Skipping wiped message: ${msgId.slice(0, 8)} (Stamp: ${deletedAt}, Msg: ${data.timestamp})`);
+        return;
+      }
+
       // Check if already stored
       const existing = LocalDBService.getCachedMessages(chatId, 1000);
       const existingMsg = existing.find(m => m.id === msgId);
@@ -194,7 +276,13 @@ class MessageSyncService {
           if (this.onMessageCallback) this.onMessageCallback(chatId);
         }
         
-        // Mark read for incoming messages
+        // Sync status from server for incoming/outgoing messages if different
+        if (existingMsg.status < data.status) {
+           LocalDBService.updateMessageStatus(msgId, data.status);
+           if (this.onMessageCallback) this.onMessageCallback(chatId);
+        }
+
+        // Mark read for incoming messages if we are actively in this chat
         if (this.activeChatId === chatId && data.senderId !== myUid && data.status < 3) {
           this.markMessageAsRead(chatId, msgId);
         }
@@ -293,20 +381,21 @@ class MessageSyncService {
             this.markMessageAsRead(chatId, msgId);
           }
         } else {
-          console.error(`[MSS] Decryption returned null for msg: ${msgId}`);
+          // Silently ignore decryption failures
         }
       } catch (err) {
-        console.error('[MSS] Decryption error:', err);
+        // Silently ignore decryption errors
       }
     });
 
     // Status update (sent → delivered → read)
     messagesRef.on('child_changed', (snapshot) => {
       const data = snapshot.val();
-      if (!data || !snapshot.key) return;
+      if (snapshot.key && LocalDBService.isMessageDeleted(snapshot.key)) return;
+      if (data.timestamp && data.timestamp < keyUpdatedAt) return;
 
       LocalDBService.saveMessage({
-        id: snapshot.key,
+        id: snapshot.key as string,
         status: data.status,
       } as any);
 
@@ -339,10 +428,15 @@ class MessageSyncService {
     const fileSize = asset.fileSize || 0;
 
     // 1. Get E2EE shared secret
-    const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
-    if (!contactPubKey) throw new Error('Recipient public key not found');
-    const sharedSecret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
-    if (!sharedSecret) throw new Error('Shared secret generation failed');
+    let sharedSecret = this.sharedSecretCache.get(chatId);
+    if (!sharedSecret) {
+      const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
+      if (!contactPubKey) throw new Error('Recipient public key not found');
+      const secret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
+      if (!secret) throw new Error('Shared secret generation failed');
+      sharedSecret = secret;
+      this.sharedSecretCache.set(chatId, sharedSecret);
+    }
 
     // 2. Generate a unique message ID
     const msgId = database().ref(`messages/${chatId}`).push().key!;
@@ -542,18 +636,21 @@ class MessageSyncService {
   ) {
     try {
       const me = LocalDBService.getContactByUid(senderId);
-      const senderName = me?.name || 'New Message';
+      const myName = me?.name || 'New Message';
+      const myPhone = me?.phoneNumber || '';
 
-      await fetch('https://push-notification-dvsr.onrender.com/send-image-notification', {
+      await fetch('https://push-notification-dvsr.onrender.com/send-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           receiverId,
           senderId,
-          senderName,
+          senderName: myName,
+          senderPhone: myPhone,
           chatId,
           msgId,
-          type: 'image_message',
+          type: 'encrypted_chat',
+          isImage: 'true',
           imageUrl: imageUrl || '',
         }),
       });
@@ -565,19 +662,29 @@ class MessageSyncService {
 
   // ── Send Text Message ──────────────────────────────────────────────────────
 
-  public async sendMessage(myUid: string, contactUid: string, text: string) {
+  public async sendMessage(
+    myUid: string, 
+    contactUid: string, 
+    text: string, 
+    preGeneratedId?: string, 
+    preGeneratedTimestamp?: number
+  ) {
 
     const chatId = this.getChatId(myUid, contactUid);
+    let sharedSecret = this.sharedSecretCache.get(chatId);
 
-    const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
-    if (!contactPubKey) throw new Error('Recipient public key not found');
-
-    const sharedSecret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
-    if (!sharedSecret) throw new Error('Shared secret generation failed');
+    if (!sharedSecret) {
+      const contactPubKey = await EncryptionService.getContactPublicKey(contactUid);
+      if (!contactPubKey) throw new Error('Recipient public key not found');
+      const secret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
+      if (!secret) throw new Error('Shared secret generation failed');
+      sharedSecret = secret;
+      this.sharedSecretCache.set(chatId, sharedSecret);
+    }
 
     const encrypted = EncryptionService.encrypt(text, sharedSecret);
-    const msgId = database().ref(`messages/${chatId}`).push().key!;
-    const timestamp = Date.now();
+    const msgId = preGeneratedId || database().ref(`messages/${chatId}`).push().key!;
+    const timestamp = preGeneratedTimestamp || Date.now();
 
 
     // 1. Local-first: save plaintext to SQLite (only device stores plaintext)
@@ -674,11 +781,12 @@ class MessageSyncService {
           receiverId: receiverId,
           senderId: senderId,
           senderName: senderName,      // Plaintext name is okay for the UI
+          senderPhone: me?.phoneNumber || '',
           cipherText: encrypted.cipherText, // Encrypted!
           iv: encrypted.iv,                 // Encrypted!
           chatId: chatId,
           msgId: msgId,
-          type: 'chat'                 // Identifies this as a message (not a call)
+          type: 'encrypted_chat'            // Standardized type
         }),
       });
 
@@ -705,39 +813,48 @@ class MessageSyncService {
   private async markAllAsRead(chatId: string) {
     if (!this.activeMyUid) return;
     const myUid = this.activeMyUid;
+    const contactUid = this.getContactUidFromChatId(chatId, myUid);
 
-    // Get all messages in this chat from RTDB and mark unread ones as read
     try {
-      const snapshot = await database().ref(`messages/${chatId}`).once('value');
+      // 1. Reset unread count in RTDB inbox immediately
+      await database().ref(`/inbox/${myUid}/${contactUid}`).update({ unreadCount: 0 });
+
+      // 2. Fetch only messages that need status update (status < 3 and not sent by me)
+      const snapshot = await database()
+        .ref(`messages/${chatId}`)
+        .orderByChild('status')
+        .endAt(2) // Only messages with status 1 (Sent) or 2 (Delivered)
+        .once('value');
+        
       const data = snapshot.val();
-      if (!data) return;
+      const existingContact = LocalDBService.getContactByUid(contactUid);
+
+      if (!data) {
+        // Even if no new messages found, reset local unread count without wiping lastMessage
+        LocalDBService.updateContactMetadata(contactUid, existingContact?.lastMessage || '', 0);
+        if (this.onInboxUpdatedCallback) this.onInboxUpdatedCallback();
+        return;
+      }
 
       const updates: any = {};
+      let count = 0;
       Object.entries(data).forEach(([msgId, msg]: [string, any]) => {
         if (msg.senderId !== myUid && msg.status < 3) {
           updates[`/messages/${chatId}/${msgId}/status`] = 3;
+          count++;
         }
       });
 
-      if (Object.keys(updates).length > 0) {
+      if (count > 0) {
         await database().ref().update(updates);
-        console.log(`[MSS] Marked ${Object.keys(updates).length} messages as read.`);
+        console.log(`[MSS] Marked ${count} messages as read.`);
       }
 
-      // Reset unread count in RTDB inbox
-      await database().ref(`/inbox/${myUid}/${this.getContactUidFromChatId(chatId, myUid)}`).update({
-        unreadCount: 0,
-      });
+      // 3. Reset unread count in SQLite (already zeroed above if !data, but do here for safety)
+      LocalDBService.updateContactMetadata(contactUid, existingContact?.lastMessage || '', 0);
+      
+      if (this.onInboxUpdatedCallback) this.onInboxUpdatedCallback();
 
-      // Reset unread count in SQLite
-      const contactUid = this.getContactUidFromChatId(chatId, myUid);
-      if (contactUid) {
-        const contact = LocalDBService.getContactByUid(contactUid);
-        if (contact) {
-          // Do not pass timestamp so it preserves existing chatTimestamp
-          LocalDBService.updateContactMetadata(contactUid, contact.lastMessage || '', 0);
-        }
-      }
     } catch (err) {
       console.error('[MSS] markAllAsRead error:', err);
     }

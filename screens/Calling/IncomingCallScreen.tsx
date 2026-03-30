@@ -4,7 +4,7 @@ import firestore from '@react-native-firebase/firestore';
 import notifee from '@notifee/react-native';
 import CallManageService from '../../services/calling/CallManageService';
 
-const IncomingCallScreen = ({ route, navigation }) => {
+const IncomingCallScreen = ({ route, navigation }: any) => {
   const { callId, callerName } = route.params;
 
   useEffect(() => {
@@ -23,6 +23,16 @@ const IncomingCallScreen = ({ route, navigation }) => {
 
   const onAnswer = async () => {
     try {
+      // Final Check: Ensure call is still active before answer
+      const callDoc = await firestore().collection('calls').doc(callId).get();
+      const status = callDoc.data()?.status;
+      if (status !== 'ringing' && status !== 'initiating') {
+        console.warn(`Call cannot be answered. Current status: ${status}`);
+        notifee.cancelNotification(callId);
+        navigation.goBack();
+        return;
+      }
+
       await notifee.cancelNotification(callId);
       await firestore().collection('calls').doc(callId).update({ status: 'accepted' });
       navigation.replace('ActiveCallScreen', { callId, isCaller: false });

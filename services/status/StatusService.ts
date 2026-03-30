@@ -20,7 +20,7 @@ import LocalDBService from '../../localDB/LocalDBService';
 import { SaavnSong } from './JioSaavnService';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-const NOTIFICATION_SERVER_URL = 'https://push-notification-dvsr.onrender.com';
+const NOTIFICATION_SERVER_URL = 'http://10.219.238.27:5221';
 
 export interface StatusData {
   id: string;

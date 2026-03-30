@@ -6,10 +6,15 @@ import { RTCPeerConnection } from 'react-native-webrtc';
 import userStore from '../../store/MyStore';
 import NavigationService from '../NavigationService';
 
-
 class CallManageService {
   constructor() {
-    this.baseUrl = 'https://push-notification-dvsr.onrender.com'; 
+    // TIP: For local testing, use your local IP: http://192.168.x.x:5221
+    // this.baseUrl = 'http://10.71.90.27:5221'; 
+    this.baseUrl = 'https://push-notification-dvsr.onrender.com';
+    this.api = axios.create({
+      baseURL: this.baseUrl,
+      timeout: 10000, // 10s timeout
+    });
   }
 
   get isBusy() {
@@ -37,11 +42,10 @@ class CallManageService {
         return false;
       }
     }
-    return true; // iOS handles permissions differently
+    return true; 
   }
 
   // 2. Global Busy Sync (Pro-Tip)
-  // App start hone par check karein if any active call document exists for this user
   async syncBusyStateOnStart(userId) {
     if (!userId) return;
     try {
@@ -56,14 +60,11 @@ class CallManageService {
         const batch = firestore().batch();
         activeCalls.docs.forEach(doc => {
           if (doc.data().status === 'accepted') {
-             // User accepted from background! Route them immediately to the call screen
-             console.log("[CallManageService] Active Call Detected on Boot! Restoring...");
              NavigationService.navigate('Screens', {
                 screen: 'ActiveCallScreen',
                 params: { callId: doc.id, isCaller: false }
              });
           } else {
-             // Sweep ringing/initiating calls as missed because app was killed
              batch.update(doc.ref, { status: 'missed' });
           }
         });
@@ -71,7 +72,6 @@ class CallManageService {
       }
       this.isBusy = false;
     } catch (e) {
-
       console.error("Busy Sync Error:", e);
     }
   }
@@ -79,15 +79,12 @@ class CallManageService {
   // 3. Battery Optimization Check (Pro-Tip)
   async checkBatteryOptimization() {
     if (Platform.OS === 'android') {
-      // In a real app, use react-native-battery-optimization-check
-      // Here we just warn the user for critical background reliability
       console.log("[CallManageService] Battery optimization check recommended for background calls.");
     }
   }
 
   // 4. Initiate Call Function
   async initiateCall(senderData, receiverId, receiverName, receiverPhoto = null, callType = 'audio') {
-    // Phase 1: Concurrency Guard
     if (this.isBusy) {
       console.warn("Call initiation blocked: App is already in a call state.");
       return { success: false, message: 'App is busy' };
@@ -99,7 +96,7 @@ class CallManageService {
       return { success: false, message: 'Permission denied' };
     }
 
-    this.isBusy = true; // Set local busy state immediately
+    this.isBusy = true; 
 
     let callerIP = "0.0.0.0";
     try {
@@ -113,8 +110,12 @@ class CallManageService {
       const callRef = await firestore().collection('calls').add({
         callerId: senderData.id,
         callerName: senderData.name,
+        callerPhoto: senderData.photo || null,
         callerIP: callerIP,
         receiverId: receiverId,
+        receiverName: receiverName || 'User',
+        receiverPhoto: receiverPhoto || null,
+        type: callType || 'audio',
         status: 'initiating', 
         initiationTimestamp: Date.now(),
         createdAt: firestore.FieldValue.serverTimestamp(),
@@ -125,6 +126,7 @@ class CallManageService {
         screen: 'OutgoingCallScreen',
         params: { 
           callId: callRef.id, 
+          receiverId: receiverId, 
           receiverName: receiverName || 'User',
           receiverPhoto: receiverPhoto,
           callType: callType
@@ -132,7 +134,7 @@ class CallManageService {
       });
 
       // Step C: Trigger Node.js for Push Signaling (Phase 1 & 2)
-      axios.post(`${this.baseUrl}/call/request`, {
+      this.api.post('/call/request', {
         callId: callRef.id,
         senderId: senderData.id,
         senderName: senderData.name,
@@ -144,7 +146,8 @@ class CallManageService {
           Alert.alert("User Busy", "The recipient is currently on another call.");
         }
       }).catch(err => {
-          console.error("Backend Call Request Failed:", err);
+          const errMsg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
+          console.error("Backend Call Request Failed:", errMsg);
           this.updateCallStatus(callRef.id, 'failed');
           this.isBusy = false;
       });
@@ -155,6 +158,25 @@ class CallManageService {
       console.error("Call Initiation Error:", error);
       this.isBusy = false;
       return { success: false, message: 'Network error or Signaling failed' };
+    }
+  }
+
+  // 4b. Robust Cancel Call
+  async cancelCall(callId, receiverId) {
+    let finalReceiverId = receiverId;
+    try {
+      if (!finalReceiverId) {
+        console.warn(`[CallManageService] receiverId missing for ${callId}. Fetching from Firestore...`);
+        const callDoc = await firestore().collection('calls').doc(callId).get();
+        finalReceiverId = callDoc.data()?.receiverId;
+      }
+      if (!finalReceiverId) throw new Error("Could not resolve receiverId for cancellation.");
+
+      await this.api.post('/call/cancel', { callId, receiverId: finalReceiverId });
+      console.log(`[CallManageService] Cancellation signal sent for ${callId}`);
+    } catch (e) {
+      const errorMsg = e.response ? `Status ${e.response.status}: ${JSON.stringify(e.response.data)}` : e.message;
+      console.error(`[CallManageService] Cancel Signal ERROR: ${errorMsg}`);
     }
   }
 
@@ -170,50 +192,28 @@ class CallManageService {
     }
   }
 
-
-async getPublicIP() {
-  return new Promise((resolve, reject) => {
-    const configuration = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
-    };
-
-    const pc = new RTCPeerConnection(configuration);
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        const candidate = event.candidate.candidate;
-        const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/; 
-        const ipAddress = candidate.match(ipRegex);
-
-        if (ipAddress && ipAddress[1]) {
-          if (candidate.includes('srflx')) {
-            console.log("Public IP Found:", ipAddress[1]);
+  async getPublicIP() {
+    return new Promise((resolve, reject) => {
+      const configuration = {
+        iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' } ],
+      };
+      const pc = new RTCPeerConnection(configuration);
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          const candidate = event.candidate.candidate;
+          const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/; 
+          const ipAddress = candidate.match(ipRegex);
+          if (ipAddress && ipAddress[1] && candidate.includes('srflx')) {
             resolve(ipAddress[1]);
             pc.close();
           }
         }
-      }
-    };
-
-    pc.createDataChannel('fake_channel');
-
-    pc.createOffer()
-      .then((offer) => pc.setLocalDescription(offer))
-      .catch((err) => {
-        console.error("Error creating offer for IP:", err);
-        reject(err);
-      });
-
-    setTimeout(() => {
-      pc.close();
-      resolve("0.0.0.0"); // Fallback instead of reject to avoid blocking call
-    }, 3000);
-  });
-}
+      };
+      pc.createDataChannel('fake_channel');
+      pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch((err) => reject(err));
+      setTimeout(() => { pc.close(); resolve("0.0.0.0"); }, 3000);
+    });
+  }
 }
 
 export default new CallManageService();
-

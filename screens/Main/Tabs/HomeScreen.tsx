@@ -64,11 +64,24 @@ const HomeScreen = () => {
 
       try {
         await checkAndUpdatePermission();
-        const pubKey = await EncryptionService.getContactPublicKey(userModelID);
-        if (!pubKey) {
+        
+        const localKeyAvailable = await EncryptionService.hasLocalPrivateKey(userModelID);
+        const remotePubKey = await EncryptionService.getContactPublicKey(userModelID);
+
+        let currentEpoch = userStore.getState().keyUpdatedAt || 0;
+
+        // ── Rule: If local private key is missing, we MUST generate a new epoch.
+        // This handles both new users and returning users who logged out/cleared data.
+        if (!localKeyAvailable || !remotePubKey) {
+          console.log('[HomeScreen] Local key missing or no remote public key. Regenerating epoch...');
           const result = await EncryptionService.generateAndStoreKeyPair(userModelID);
-          setKeyUpdatedAt(result.keyUpdatedAt);
+          currentEpoch = result.keyUpdatedAt;
+          setKeyUpdatedAt(currentEpoch);
+          
+          // Clear RTDB unread slate for the new epoch
+          await MessageSyncService.cleanseInboxEpoch(userModelID, currentEpoch);
         }
+
         MessageSyncService.setOnInboxUpdatedCallback(() => { fetchChatUsers(); });
         MessageSyncService.listenToInbox(userModelID);
         MessageSyncService.monitorConnectivity();
@@ -136,7 +149,7 @@ const HomeScreen = () => {
         </View>
         <View style={styles.messageRow}>
           <Text style={styles.lastMessage} numberOfLines={1}>
-            {item.lastMessage || item.phoneNumber}
+            {item.lastMessage || 'No messages'}
           </Text>
           {item.unreadCount && item.unreadCount > 0 ? (
             <View style={styles.unreadBadge}>

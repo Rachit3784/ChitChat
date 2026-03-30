@@ -5,6 +5,7 @@ import ChatScreen from '../screens/Main/NoTabs/ChatScreen';
 import OutgoingCallScreen from '../screens/Calling/OutgoingCallScreen';
 import IncomingCallScreen from '../screens/Calling/IncomingCallScreen';
 import ActiveCallScreen from '../screens/Calling/ActiveCallScreen';
+import CallDetailScreen from '../screens/Calling/CallDetailScreen';
 import CreateStatusScreen from '../screens/Main/NoTabs/CreateStatusScreen';
 import StatusViewerScreen from '../screens/Main/NoTabs/StatusViewerScreen';
 import StatusInsightsScreen from '../screens/Main/NoTabs/StatusInsightsScreen';
@@ -31,6 +32,11 @@ const ScreensNavigation = () => {
         name="ActiveCallScreen"
         component={ActiveCallScreen}
         options={{ animation: 'fade', gestureEnabled: false }}
+      />
+      <Stack.Screen
+        name="CallDetailScreen"
+        component={CallDetailScreen}
+        options={{ animation: 'slide_from_right' }}
       />
       {/* ── Status Screens ── */}
       <Stack.Screen

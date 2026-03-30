@@ -11,6 +11,37 @@ import { handleNotificationLogic } from './calling/NotificationHandler';
 
 // This must match exactly what is in your EncryptionService
 const KEYCHAIN_SERVICE_PRIVATE = 'secure_chat_private_key';
+const NOTIFICATION_BRIDGE_URL = 'https://push-notification-dvsr.onrender.com';
+
+/**
+ * STANDALONE UNIVERSAL BACKGROUND HANDLER
+ * This is the single, headless-safe entry point for all FCM messages in background/kill mode.
+ * Being standalone (outside a class) is critical for reliability when the app is completely closed.
+ */
+export const handleBackgroundMessage = async (remoteMessage: any) => {
+  console.log('[FCM] 🟠 HEADLESS BACKGROUND ARRIVED:', remoteMessage.data);
+  
+  const type = remoteMessage.data?.type;
+
+  try {
+    if (type === 'INCOMING_CALL') {
+      await handleNotificationLogic(remoteMessage);
+    } 
+    else if (type === 'CALL_CANCELLED') {
+      const callId = remoteMessage.data?.callId as string;
+      if (callId) await notifee.cancelNotification(callId);
+    } 
+    else if (type === 'encrypted_chat') {
+      const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
+      const myUid = credentials ? credentials.username : null;
+      
+      // Even if myUid is missing, we proceed to display a "Locked" notification
+      await notificationServiceReference.handleEncryptedNotification(remoteMessage, myUid, true);
+    }
+  } catch (e) {
+    console.error('[FCM] Headless handler error:', e);
+  }
+};
 
 class NotificationService {
   private lastToken: string | null = null;
@@ -28,47 +59,24 @@ class NotificationService {
   }
 
   setupMessageHandlers() {
-    // --- BACKGROUND MESSAGES ---
-    messaging().setBackgroundMessageHandler(async (remoteMessage) => {
-      console.log('[NotificationService] Background message:', remoteMessage);
+    // --- FOREGROUND MESSAGES ---
+    messaging().onMessage(async (remoteMessage) => {
+      console.log('[NotificationService] 🔵 FOREGROUND FCM ARRIVED:', remoteMessage.data);
+      
+      const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
+      const myUid = credentials ? credentials.username : null;
 
       if (remoteMessage.data?.type === 'INCOMING_CALL') {
         await handleNotificationLogic(remoteMessage);
       }
 
-      const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
-      const myUid = credentials ? credentials.username : null;
-
-      if (remoteMessage.data?.type === 'call') {
-        const notifType = remoteMessage.data?.notificationType;
-        if (notifType === 'call_cancelled' || notifType === 'call_missed') {
-          // Caller cancelled before pickup — silently dismiss the incoming-call notification
-          await notifee.cancelNotification('incoming-call');
-        } else {
-          await this.handleCallNotification(remoteMessage.data);
-        }
-      } else if (remoteMessage.data?.type === 'encrypted_chat' && myUid) {
-        await this.handleEncryptedNotification(remoteMessage, myUid);
+      if (remoteMessage.data?.type === 'CALL_CANCELLED') {
+        const callId = remoteMessage.data?.callId as string;
+        if (callId) await notifee.cancelNotification(callId);
       }
-    });
 
-    // --- FOREGROUND MESSAGES ---
-    messaging().onMessage(async (remoteMessage) => {
-      console.log('[NotificationService] Foreground message:', remoteMessage);
-
-      const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
-      const myUid = credentials ? credentials.username : null;
-
-      if (remoteMessage.data?.type === 'call') {
-        const notifType = remoteMessage.data?.notificationType;
-        if (notifType === 'call_cancelled' || notifType === 'call_missed') {
-          // Dismiss any pending notification and let IncomingCallOverlay handle the rest
-          await notifee.cancelNotification('incoming-call');
-        } else {
-          await this.handleCallNotification(remoteMessage.data);
-        }
-      } else if (remoteMessage.data?.type === 'encrypted_chat' && myUid) {
-        await this.handleEncryptedNotification(remoteMessage, myUid);
+      if (remoteMessage.data?.type === 'encrypted_chat' && myUid) {
+        await this.handleEncryptedNotification(remoteMessage, myUid, false);
       }
     });
 
@@ -81,6 +89,8 @@ class NotificationService {
           this.handleNotificationPress(notification.data);
         } else if (notification?.data?.type === 'chat') {
           this.handleChatPress(notification.data, notification?.id);
+        } else if (notification?.data?.type === 'missed_call') {
+          this.handleMissedCallPress(notification?.id);
         }
       }
 
@@ -93,65 +103,84 @@ class NotificationService {
     notifee.onBackgroundEvent(async (event) => handleEvent(event));
   }
 
-  async handleEncryptedNotification(remoteMessage: any, myUid: string) {
-    const { cipherText, iv, senderId, senderPhoto, senderPhone, chatId, msgId, isImage } = remoteMessage.data;
+  /**
+   * Universal Decryption and Display Logic with Resilience
+   */
+  async handleEncryptedNotification(remoteMessage: any, myUid: string | null, isBackground: boolean = false) {
+    const { cipherText, iv, senderId, senderPhoto, senderPhone, senderName, chatId, msgId, isImage } = remoteMessage.data;
+    console.log(`[NotificationService] Resilient Push Check: msgId=${msgId}, bg=${isBackground}`);
 
     try {
       await this.createDefaultChannels();
-
-      // 1. Resolve Identity
       const localContact = LocalDBService.getContactByUid(senderId);
-      const displayTitle = localContact ? localContact.name : (senderPhone || 'New Message');
+      
+      // Fallback Display Metadata
+      const displayTitle = senderName || localContact?.name || senderPhone || 'Private Message';
+      let finalBody = isImage === 'true' ? '📷 New Photo' : '🔒 New Encrypted Message (Tap to See)';
 
-      // 2. For image messages — skip decryption, show emoji preview
-      let finalMessage: string;
-      if (isImage === 'true') {
-        finalMessage = '📷 Photo';
+      // 1. Attempt Decryption only if myUid and keys are available
+      if (myUid) {
+        try {
+          if (isImage === 'true') {
+            finalBody = '📷 New Photo';
+          } else {
+            console.log('[NotificationService] Attempting Decryption...');
+            const contactPubKey = await EncryptionService.getContactPublicKey(senderId);
+            if (contactPubKey) {
+              const sharedSecret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
+              if (sharedSecret) {
+                const decryptedText = EncryptionService.decrypt({ cipherText, iv }, sharedSecret);
+                if (decryptedText) finalBody = decryptedText;
+              }
+            }
+          }
+        } catch (decryptErr: any) {
+          console.warn('[NotificationService] Decryption failed or timed out:', decryptErr.message);
+          // Kept as fallback generic message
+        }
       } else {
-        // Decrypt text message
-        const contactPubKey = await EncryptionService.getContactPublicKey(senderId);
-        if (!contactPubKey) return;
-        const sharedSecret = await EncryptionService.getSharedSecret(myUid, contactPubKey);
-        if (!sharedSecret) return;
-        const decryptedText = EncryptionService.decrypt({ cipherText, iv }, sharedSecret);
-        finalMessage = decryptedText || 'New encrypted message';
+        console.warn('[NotificationService] SKIP Decrypt: UID missing or Keychain locked.');
       }
 
-      // 3. Display notification (skip if user is actively in this chat)
-      const isForeground = AppState.currentState === 'active';
-      if (!(isForeground && MessageSyncService.activeChatId === chatId)) {
+      const isForeground = !isBackground && AppState.currentState === 'active';
+      const isCurrentChat = MessageSyncService.activeChatId === chatId;
+
+      // 2. ALWAYS DISPLAY NOTIFICATION in background (even if decryption failed)
+      if (!isForeground) {
+        console.log('[NotificationService] Calling notifee.displayNotification...');
         await notifee.displayNotification({
           title: displayTitle,
-          body: finalMessage,
+          body: finalBody,
+          id: msgId,
           android: {
-            channelId: 'messages_v3',
+            channelId: 'messages_v4',
             importance: AndroidImportance.HIGH,
-            largeIcon: senderPhoto || undefined,
+            visibility: AndroidVisibility.PUBLIC,
+            largeIcon: (typeof senderPhoto === 'string' && senderPhoto.startsWith('http')) ? senderPhoto : undefined,
             pressAction: { id: 'default', launchActivity: 'default' },
+            smallIcon: 'ic_launcher',
           },
           ios: { sound: 'default' },
           data: { type: 'chat', senderId, chatId },
         });
       }
 
-      // 4. Update SQLite contact preview
-      const newUnread = (localContact?.unreadCount || 0) + 1;
-      LocalDBService.updateContactMetadata(senderId, finalMessage, newUnread, Date.now());
+      // 3. Update Sync Metadata (SQLite)
+      if (myUid) {
+        const unreadToSet = (isForeground && isCurrentChat) ? 0 : (localContact?.unreadCount || 0) + 1;
+        LocalDBService.updateContactMetadata(senderId, finalBody, unreadToSet, Date.now());
+        if (MessageSyncService.onInboxUpdatedCallback) MessageSyncService.onInboxUpdatedCallback();
+      }
 
     } catch (error) {
-      console.error('[NotificationService] Encrypted handler error:', error);
+      console.error('[NotificationService] Global notification error:', error);
     }
   }
 
   async handleChatPress(data: any, notificationId?: string) {
     if (!data) return;
-
-    if (notificationId) {
-      await notifee.cancelNotification(notificationId);
-    }
-
+    if (notificationId) await notifee.cancelNotification(notificationId);
     const contact = LocalDBService.getContactByUid(data.senderId);
-
     NavigationService.navigate('Main', {
       screen: 'Home',
       params: {
@@ -162,16 +191,17 @@ class NotificationService {
     });
   }
 
-  // --- CALL HANDLERS ---
   async handleCallNotification(data: any) {
-    const { receiverUid, senderName, senderId, callerPhoto, callType } = data;
+    const { receiverUid, senderName, senderId, callerPhoto, callType, callId } = data;
+    const notificationId = callId || 'incoming-call';
     try {
       await notifee.displayNotification({
-        id: 'incoming-call',
+        id: notificationId,
         title: callType === 'video' ? '📹 Incoming Video Call' : '🎤 Incoming Voice Call',
         body: `${senderName} is calling you...`,
         data: {
           type: 'call',
+          callId: notificationId,
           callerId: senderId,
           receiverId: receiverUid,
           callerName: senderName,
@@ -183,6 +213,7 @@ class NotificationService {
           importance: AndroidImportance.HIGH,
           autoCancel: false,
           ongoing: true,
+          largeIcon: (typeof callerPhoto === 'string' && callerPhoto.startsWith('http')) ? callerPhoto : undefined,
           fullScreenAction: { id: 'default' },
           actions: [
             { title: '✅ Accept', pressAction: { id: 'accept', launchActivity: 'default' } },
@@ -200,13 +231,18 @@ class NotificationService {
   }
 
   async handleNotificationPress(data: any) {
-    const { callerId, receiverId, callerName, callerPhoto, callType } = data;
-    await notifee.cancelNotification('incoming-call');
-    // Navigate to the IncomingCallScreen so the user can accept/decline
+    if (!data) return;
+    const { callerId, receiverId, callerName, callerPhoto, callType, type, callId } = data;
+    if (type === 'missed_call') {
+      this.handleMissedCallPress();
+      return;
+    }
+    const callIdToCancel = (callId as string) || (callerId < receiverId ? callerId + '_' + receiverId : receiverId + '_' + callerId);
+    await notifee.cancelNotification(callIdToCancel);
     NavigationService.navigate('Screens', {
       screen: 'IncomingCallScreen',
       params: {
-        callId: callerId < receiverId ? callerId + '_' + receiverId : receiverId + '_' + callerId,
+        callId: callIdToCancel,
         callerUid: callerId,
         callerName: callerName || 'Incoming Call',
         callerPhoto: callerPhoto || null,
@@ -215,15 +251,19 @@ class NotificationService {
     });
   }
 
-  async handleDeclineCall(data: any) {
-    if (!data) return;
-    const { callerId, receiverId } = data;
-    const deterministicID = callerId < receiverId ? callerId + receiverId : receiverId + callerId;
-    await firestore().collection('calls').doc(deterministicID).update({ status: 'ended' });
-    await notifee.cancelNotification('incoming-call');
+  async handleMissedCallPress(notificationId?: string) {
+    if (notificationId) await notifee.cancelNotification(notificationId);
+    NavigationService.navigate('Main', { screen: 'Call' });
   }
 
-  // --- TOKEN MANAGEMENT ---
+  async handleDeclineCall(data: any) {
+    if (!data) return;
+    const { callerId, receiverId, callId } = data;
+    const callIdToCancel = callId || (callerId < receiverId ? callerId + receiverId : receiverId + callerId);
+    await firestore().collection('calls').doc(callIdToCancel).update({ status: 'ended' });
+    await notifee.cancelNotification(callIdToCancel);
+  }
+
   async saveTokenToDatabase(userId: string, token: string | null) {
     if (!userId || this.lastToken === token) return;
     try {
@@ -243,8 +283,8 @@ class NotificationService {
   async createDefaultChannels() {
     if (Platform.OS === 'android') {
       await notifee.createChannel({
-        id: 'messages_v3',
-        name: 'Chat Messages',
+        id: 'messages_v4',
+        name: 'Messages',
         importance: AndroidImportance.HIGH,
         visibility: AndroidVisibility.PUBLIC,
         vibration: true,
@@ -266,24 +306,26 @@ class NotificationService {
       const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
       return granted === PermissionsAndroid.RESULTS.GRANTED;
     }
-    const authStatus = await messaging().requestPermission();
-    return authStatus === messaging.AuthorizationStatus.AUTHORIZED || authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+    return true;
   }
 
   async getFCMToken() {
-    if (Platform.OS === 'ios' && !messaging().isDeviceRegisteredForRemoteMessages) {
-      await messaging().registerDeviceForRemoteMessages();
+    try {
+      const token = await messaging().getToken();
+      return token;
+    } catch (error) {
+      console.error('[NotificationService] Error getting FCM token:', error);
+      return null;
     }
-    return await messaging().getToken();
   }
 
   async updateFCMToken(userId: string) {
-    if (!userId) return;
-    await this.requestPermission();
     const token = await this.getFCMToken();
-    if (token) await this.saveTokenToDatabase(userId, token);
+    if (token) {
+      await this.saveTokenToDatabase(userId, token);
+    }
   }
 }
 
-export default new NotificationService();
-
+const notificationServiceReference = new NotificationService();
+export default notificationServiceReference;

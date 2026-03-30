@@ -40,6 +40,10 @@ class CallLogService {
     LocalDBService.clearCallLogs();
   }
 
+  deleteLogs(ids: string[]): void {
+    LocalDBService.deleteCallLogs(ids);
+  }
+
   /**
    * Sync call logs from Firestore to local SQLite.
    * Fetches last 50 calls involving this user.
@@ -49,16 +53,16 @@ class CallLogService {
       // Calls where I was the caller
       const asCallerSnap = await firestore()
         .collection('calls')
-        .where('callerUid', '==', myUid)
-        .orderBy('startedAt', 'desc')
+        .where('callerId', '==', myUid)
+        .orderBy('initiationTimestamp', 'desc')
         .limit(50)
         .get();
 
       // Calls where I was the receiver
       const asReceiverSnap = await firestore()
         .collection('calls')
-        .where('receiverUid', '==', myUid)
-        .orderBy('startedAt', 'desc')
+        .where('receiverId', '==', myUid)
+        .orderBy('initiationTimestamp', 'desc')
         .limit(50)
         .get();
 
@@ -66,17 +70,17 @@ class CallLogService {
 
       for (const doc of allDocs) {
         const data = doc.data();
-        const isCaller = data.callerUid === myUid;
+        const isMeCaller = data.callerId === myUid;
 
         const log: CallLog = {
           id: doc.id,
-          contactUid: isCaller ? data.receiverUid : data.callerUid,
-          contactName: isCaller ? (data.receiverName || 'Unknown') : data.callerName,
-          contactPhoto: isCaller ? (data.receiverPhoto || null) : (data.callerPhoto || null),
+          contactUid: isMeCaller ? data.receiverId : data.callerId,
+          contactName: isMeCaller ? (data.receiverName || 'User') : (data.callerName || 'User'),
+          contactPhoto: isMeCaller ? (data.receiverPhoto || null) : (data.callerPhoto || null),
           callType: data.type || 'audio',
-          direction: isCaller ? 'outgoing' : 'incoming',
-          status: this.mapFirestoreStatus(data.status, isCaller),
-          startedAt: data.startedAt || Date.now(),
+          direction: isMeCaller ? 'outgoing' : 'incoming',
+          status: this.mapFirestoreStatus(data.status, isMeCaller),
+          startedAt: data.initiationTimestamp || Date.now(),
           duration: data.duration || 0,
         };
 

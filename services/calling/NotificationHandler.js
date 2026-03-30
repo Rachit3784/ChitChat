@@ -1,9 +1,10 @@
 import notifee, { AndroidImportance, AndroidCategory, EventType } from '@notifee/react-native';
 import axios from 'axios';
 import firestore from '@react-native-firebase/firestore';
+import CallLogService from './CallLogService';
 
 const baseUrl = 'https://push-notification-dvsr.onrender.com'; // Match this with CallManageService
-
+// const baseUrl = 'http://10.71.90.27:5221'
 // 1. Common Function to Display/Update Notification (Phase 3)
 export const displayIncomingCall = async (data) => {
   const { callId, callerName } = data;
@@ -52,8 +53,22 @@ export const displayIncomingCall = async (data) => {
       if (activeCall.exists && activeCall.data().status === 'ringing') {
         console.log(`Call ${callId} auto-cut: Missed Call (40s timer)`);
         await notifee.cancelNotification(callId);
+        
+        // Local Log for Auto-Cut
+        CallLogService.saveCallLog({
+           id: callId,
+           contactUid: activeCall.data().callerUid,
+           contactName: activeCall.data().callerName || 'Unknown',
+           contactPhoto: activeCall.data().callerPhoto || null,
+           callType: activeCall.data().callType || 'audio',
+           direction: 'incoming',
+           status: 'missed',
+           startedAt: Date.now(),
+           duration: 0
+        });
+
         await firestore().collection('calls').doc(callId).update({ status: 'missed' });
-        await showMissedCall(callerName);
+        await showMissedCall(callerName, callId);
       }
     } catch (e) {
       console.warn("Auto-cut timer error:", e);
@@ -95,6 +110,7 @@ export const showMissedCall = async (callerName, callId) => {
   await notifee.displayNotification({
     title: 'Missed Call',
     body: `You missed a call from ${callerName}`,
+    data: { type: 'missed_call' },
     android: { 
       channelId: 'incoming-calls',
       importance: AndroidImportance.DEFAULT,
@@ -113,7 +129,32 @@ export const handleNotificationLogic = async (remoteMessage) => {
     await axios.post(`${baseUrl}/call/confirm-receipt`, { callId })
       .catch(e => console.error("Ack Failed:", e.message));
 
-    // Step B: Latency Validation (10s Rule - Phase 3)
+    // Step B: Live Re-Sync (Keep eye on call status - Phase 3)
+    const unsubscribe = firestore().collection('calls').doc(callId).onSnapshot(doc => {
+      if (!doc.exists) return;
+      const status = doc.data()?.status;
+      if (['ended', 'cancelled', 'declined', 'missed'].includes(status)) {
+        console.log(`[NotificationHandler] Call ${callId} ${status} - Dismissing UI.`);
+        notifee.cancelNotification(callId);
+
+        // Local Log for Remote Dismissal
+        CallLogService.saveCallLog({
+           id: callId,
+           contactUid: data.callerUid || (data.callerId > data.receiverId ? data.callerId : data.receiverId),
+           contactName: data.callerName || 'User',
+           contactPhoto: data.callerPhoto || null,
+           callType: data.type || 'audio',
+           direction: 'incoming',
+           status: status === 'cancelled' ? 'missed' : 'declined',
+           startedAt: Date.now(),
+           duration: 0
+        });
+
+        unsubscribe(); // Stop watching
+      }
+    });
+
+    // Step C: Latency Validation (10s Rule - Phase 3)
     const initTime = parseInt(initiationTimestamp);
     const currentTime = Date.now();
     const delaySeconds = (currentTime - initTime) / 1000;
@@ -123,7 +164,7 @@ export const handleNotificationLogic = async (remoteMessage) => {
     if (delaySeconds > 10) {
       console.warn(`[Phase 3] Call ${callId} arrived late (${delaySeconds}s). Marking as missed.`);
       await firestore().collection('calls').doc(callId).update({ status: 'missed' });
-      await showMissedCall(callerName);
+      await showMissedCall(callerName, callId);
       return;
     }
 

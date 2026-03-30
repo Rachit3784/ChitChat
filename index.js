@@ -31,7 +31,10 @@ import notifee, { EventType } from '@notifee/react-native';
 import firestore from '@react-native-firebase/firestore';
 import { handleNotificationLogic, convertToOngoingCall } from './services/calling/NotificationHandler';
 
-// ... (previous code)
+import NotificationService, { handleBackgroundMessage } from './services/NotificationService';
+
+// Unified Background Message Handler (Registered at the very top for reliability)
+messaging().setBackgroundMessageHandler(handleBackgroundMessage);
 
 // Handle background events (Phase 4 & 6)
 notifee.onBackgroundEvent(async ({ type, detail }) => {
@@ -41,7 +44,7 @@ notifee.onBackgroundEvent(async ({ type, detail }) => {
   if (type === EventType.ACTION_PRESS) {
     if (pressAction?.id === 'accept') {
       console.log('User accepted call from background');
-      
+
       // 1. Update Firestore (Phase 4)
       await firestore().collection('calls').doc(notification.id).update({ status: 'accepted' });
 
