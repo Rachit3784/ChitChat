@@ -34,16 +34,18 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
+    
+    // Start Audio Session and screen ON as soon as we mount
+    if (InCallManager) {
+      InCallManager.start({ media: 'video' });
+      InCallManager.setSpeakerphoneOn(true);
+      InCallManager.setKeepScreenOn(true); // Ensure screen stays awake during connection
+    }
+
     if (connectionStatus === 'Connected') {
       timer = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
-
-      // Start Audio Session when connected
-      if (InCallManager) {
-        InCallManager.start({ media: 'video' });
-        InCallManager.setSpeakerphoneOn(true);
-      }
     }
     return () => {
       if (timer) clearInterval(timer);
@@ -102,7 +104,12 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       try {
         const stream: any = await mediaDevices.getUserMedia({
           audio: true,
-          video: true,
+          video: {
+            width: { min: 640 },
+            height: { min: 480 },
+            frameRate: 30,
+            facingMode: 'user'
+          },
         });
         if (isMounted) {
           setLocalStream(stream);
@@ -378,7 +385,7 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
       <View style={styles.remoteWrapper}>
         {remoteStream ? (
-          <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} objectFit="cover" />
+          <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} objectFit="cover" zOrder={0} />
         ) : (
           <View style={styles.placeholder}>
             <Text style={styles.connectingText}>{connectionStatus}</Text>

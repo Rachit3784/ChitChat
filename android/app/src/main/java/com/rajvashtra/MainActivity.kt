@@ -5,6 +5,8 @@ import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import android.os.Bundle
+import android.os.Build
+import android.view.WindowManager
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
 
 
@@ -26,6 +28,16 @@ class MainActivity : ReactActivity() {
 
       
   override fun onCreate(savedInstanceState: Bundle?) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
+    }
+    window.addFlags(
+        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+        WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
+    )
     supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
     super.onCreate(savedInstanceState)
   }

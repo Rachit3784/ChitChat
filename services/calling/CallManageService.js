@@ -10,7 +10,7 @@ class CallManageService {
   constructor() {
     // TIP: For local testing, use your local IP: http://192.168.x.x:5221
     // this.baseUrl = 'http://10.219.238.27:5221';
-    this.baseUrl = 'https://push-notification-dvsr.onrender.com';
+    this.baseUrl = 'https://push-notification-dvsr.onrender.com'; 
     this.api = axios.create({
       baseURL: this.baseUrl,
       timeout: 10000, // 10s timeout
@@ -98,16 +98,8 @@ class CallManageService {
           }
         });
         await batch.commit();
-        
-        // Only reset isBusy if we didn't restore an active call
-        // This prevents double navigation when answering from kill mode
-        if (!this.isBusy) {
-          this.isBusy = false;
-        }
-      } else {
-        // No active calls found, ensure isBusy is reset
-        this.isBusy = false;
       }
+      this.isBusy = false;
     } catch (e) {
       console.error("Busy Sync Error:", e);
     }
