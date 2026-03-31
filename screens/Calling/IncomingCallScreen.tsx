@@ -28,13 +28,15 @@ const IncomingCallScreen = ({ route, navigation }: any) => {
       const status = callDoc.data()?.status;
       if (status !== 'ringing' && status !== 'initiating') {
         console.warn(`Call cannot be answered. Current status: ${status}`);
-        notifee.cancelNotification(callId);
+        await notifee.cancelNotification(callId);
+        await notifee.stopForegroundService();
         navigation.goBack();
         return;
       }
 
       await notifee.cancelNotification(callId);
       await firestore().collection('calls').doc(callId).update({ status: 'accepted' });
+      // Navigate through the Screens stack (not a direct screen replace)
       navigation.replace('ActiveCallScreen', { callId, isCaller: false });
     } catch (e) {
       console.error("Answer Error:", e);
@@ -44,7 +46,9 @@ const IncomingCallScreen = ({ route, navigation }: any) => {
   const onDecline = async () => {
     try {
       CallManageService.isBusy = false;
+      // Cancel the incoming notification AND stop any foreground service it may have created
       await notifee.cancelNotification(callId);
+      await notifee.stopForegroundService();
       await firestore().collection('calls').doc(callId).update({ status: 'declined' });
       navigation.goBack();
     } catch (e) {

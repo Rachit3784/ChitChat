@@ -38,7 +38,7 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       timer = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
-      
+
       // Start Audio Session when connected
       if (InCallManager) {
         InCallManager.start({ media: 'video' });
@@ -83,13 +83,22 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       await notifee.displayNotification({
         id: callId,
         title: 'Ongoing Call',
-        body: 'Call in progress',
-        android: { channelId, asForegroundService: true, ongoing: true }
+        body: 'Tap to return to call',
+        data: { type: 'ongoing_call', callId: callId },
+        android: {
+          channelId,
+          asForegroundService: true,
+          ongoing: true,
+          // Tapping the notification body brings the app to foreground
+          pressAction: { id: 'default', launchActivity: 'default' },
+          // End Call action works from notification shade or lock screen
+          actions: [{ title: 'End Call', pressAction: { id: 'end_call', launchActivity: 'default' } }],
+        }
       });
     };
     showNotice();
 
-    const setupWebRTC = async () => {
+    const setupWebRTC = async (retryCount = 0) => {
       try {
         const stream: any = await mediaDevices.getUserMedia({
           audio: true,
@@ -112,13 +121,32 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         };
 
         pc.current.oniceconnectionstatechange = () => {
-             const state = pc.current.iceConnectionState;
-             console.log("[WebRTC] ICE State:", state);
-             if (state === 'connected' || state === 'completed') {
-                setConnectionStatus('Connected');
-             } else if (state === 'failed') {
-                setConnectionStatus('Connection Failed');
-             }
+          const state = pc.current.iceConnectionState;
+          console.log("[WebRTC] ICE State:", state);
+          if (state === 'connected' || state === 'completed') {
+            setConnectionStatus('Connected');
+          } else if (state === 'failed') {
+            setConnectionStatus('Connection Failed');
+            // Auto-end the call so Firestore is updated and both sides clean up.
+            // This prevents the stale 'accepted' state from flashing ActiveCallScreen
+            // when the other user kills the app and comes back.
+            firestore().collection('calls').doc(callId)
+              .get().then(snap => {
+                if (snap.data()?.status === 'accepted') {
+                  firestore().collection('calls').doc(callId).update({ status: 'ended' });
+                }
+              }).catch(() => {});
+          } else if (state === 'disconnected') {
+            setConnectionStatus('Reconnecting...');
+            // Give 5 seconds to recover before ending
+            setTimeout(() => {
+              if (!isMounted) return;
+              const currentState = pc.current?.iceConnectionState;
+              if (currentState === 'disconnected' || currentState === 'failed') {
+                firestore().collection('calls').doc(callId).update({ status: 'ended' }).catch(() => {});
+              }
+            }, 5000);
+          }
         };
 
         const callDoc = firestore().collection('calls').doc(callId);
@@ -154,12 +182,12 @@ const CallActiveScreen = ({ route, navigation }: any) => {
           const unsubOffer = callDoc.onSnapshot(async doc => {
             const data = doc.data();
             if (data?.offer && pc.current.signalingState === 'stable' && !isRemoteDescriptionSet.current) {
-                await pc.current.setRemoteDescription(new RTCSessionDescription(data.offer));
-                isRemoteDescriptionSet.current = true;
-                const answer = await pc.current.createAnswer();
-                await pc.current.setLocalDescription(answer);
-                await callDoc.update({ answer: { sdp: answer.sdp, type: answer.type } });
-                processBufferedCandidates();
+              await pc.current.setRemoteDescription(new RTCSessionDescription(data.offer));
+              isRemoteDescriptionSet.current = true;
+              const answer = await pc.current.createAnswer();
+              await pc.current.setLocalDescription(answer);
+              await callDoc.update({ answer: { sdp: answer.sdp, type: answer.type } });
+              processBufferedCandidates();
             }
           });
 
@@ -170,7 +198,13 @@ const CallActiveScreen = ({ route, navigation }: any) => {
           });
           return () => { unsubOffer(); unsubIce(); };
         }
-      } catch (e) { console.error("WebRTC Setup Error:", e); }
+      } catch (e: any) {
+        console.error("WebRTC Setup Error:", e);
+        if (e.message?.includes('No current Activity') && retryCount < 2) {
+          console.log(`[WebRTC] Activity not ready, retrying in 1s... (Attempt ${retryCount + 1})`);
+          setTimeout(() => setupWebRTC(retryCount + 1), 1000);
+        }
+      }
     };
 
     const handleRemoteCandidate = (candidateData: any) => {
@@ -188,7 +222,13 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       }
     };
 
-    setupWebRTC();
+    // Kill-mode fix: Wait for Activity to be fully initialized before requesting media
+    const { InteractionManager } = require('react-native');
+    InteractionManager.runAfterInteractions(() => {
+        setTimeout(() => {
+            if (isMounted) setupWebRTC();
+        }, 500);
+    });
 
     const unsubStatus = firestore().collection('calls').doc(callId).onSnapshot(doc => {
       if (!doc.exists) return;
@@ -197,14 +237,14 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
       // Store contact info for logging
       if (!contactRef.current && data) {
-         const isMeCaller = data.callerId === userStore.getState().userModelID;
-         contactRef.current = {
-            uid: isMeCaller ? data.receiverId : data.callerId,
-            name: isMeCaller ? (data.receiverName || 'User') : data.callerName,
-            photo: isMeCaller ? data.receiverPhoto : data.callerPhoto,
-            type: data.type || 'audio',
-            direction: isMeCaller ? 'outgoing' : 'incoming'
-         };
+        const isMeCaller = data.callerId === userStore.getState().userModelID;
+        contactRef.current = {
+          uid: isMeCaller ? data.receiverId : data.callerId,
+          name: isMeCaller ? (data.receiverName || 'User') : data.callerName,
+          photo: isMeCaller ? data.receiverPhoto : data.callerPhoto,
+          type: data.type || 'audio',
+          direction: isMeCaller ? 'outgoing' : 'incoming'
+        };
       }
 
       if (['ended', 'cancelled', 'declined', 'missed'].includes(status)) {
@@ -222,17 +262,17 @@ const CallActiveScreen = ({ route, navigation }: any) => {
   const cleanup = () => {
     // Save to local log before cleaning up
     if (contactRef.current) {
-        CallLogService.saveCallLog({
-            id: callId,
-            contactUid: contactRef.current.uid,
-            contactName: contactRef.current.name,
-            contactPhoto: contactRef.current.photo || null,
-            callType: contactRef.current.type,
-            direction: contactRef.current.direction,
-            status: 'completed',
-            startedAt: Date.now() - (callDuration * 1000),
-            duration: callDuration
-        });
+      CallLogService.saveCallLog({
+        id: callId,
+        contactUid: contactRef.current.uid,
+        contactName: contactRef.current.name,
+        contactPhoto: contactRef.current.photo || null,
+        callType: contactRef.current.type,
+        direction: contactRef.current.direction,
+        status: 'completed',
+        startedAt: Date.now() - (callDuration * 1000),
+        duration: callDuration
+      });
     }
 
     if (InCallManager) InCallManager.stop();
@@ -245,7 +285,7 @@ const CallActiveScreen = ({ route, navigation }: any) => {
 
   const cleanupAndExit = () => {
     cleanup();
-    navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main' , {path : 'Home'});
+    navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main', { path: 'Home' });
   };
 
   const endCall = async () => {
@@ -269,11 +309,11 @@ const CallActiveScreen = ({ route, navigation }: any) => {
   };
 
   const toggleSpeaker = () => {
-     if (InCallManager) {
-        const nextSpeakerState = !isSpeakerOnState;
-        InCallManager.setSpeakerphoneOn(nextSpeakerState);
-        setIsSpeakerOn(nextSpeakerState);
-     }
+    if (InCallManager) {
+      const nextSpeakerState = !isSpeakerOnState;
+      InCallManager.setSpeakerphoneOn(nextSpeakerState);
+      setIsSpeakerOn(nextSpeakerState);
+    }
   };
 
   const toggleCamera = () => {
@@ -298,7 +338,7 @@ const CallActiveScreen = ({ route, navigation }: any) => {
           <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} objectFit="cover" />
         ) : (
           <View style={styles.placeholder}>
-             <Text style={styles.connectingText}>{connectionStatus}</Text>
+            <Text style={styles.connectingText}>{connectionStatus}</Text>
           </View>
         )}
       </View>
@@ -308,7 +348,7 @@ const CallActiveScreen = ({ route, navigation }: any) => {
           <RTCView streamURL={localStream.toURL()} style={styles.localVideo} objectFit="cover" zOrder={1} mirror={true} />
         ) : (
           <View style={[styles.localVideo, { backgroundColor: '#444', justifyContent: 'center', alignItems: 'center' }]}>
-             <VideoOff color="#fff" size={24} />
+            <VideoOff color="#fff" size={24} />
           </View>
         )}
       </View>
@@ -319,11 +359,11 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.btn, !isSpeakerOnState && styles.btnActive]} onPress={() => {
-            if (InCallManager) {
-                const next = !isSpeakerOnState;
-                InCallManager.setSpeakerphoneOn(next);
-                setIsSpeakerOn(next);
-            }
+          if (InCallManager) {
+            const next = !isSpeakerOnState;
+            InCallManager.setSpeakerphoneOn(next);
+            setIsSpeakerOn(next);
+          }
         }}>
           {isSpeakerOnState ? <Volume2 color="#fff" size={28} /> : <VolumeX color="#fff" size={28} />}
         </TouchableOpacity>

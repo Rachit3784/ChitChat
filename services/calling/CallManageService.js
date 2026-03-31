@@ -9,7 +9,7 @@ import NavigationService from '../NavigationService';
 class CallManageService {
   constructor() {
     // TIP: For local testing, use your local IP: http://192.168.x.x:5221
-    // this.baseUrl = 'http://10.71.90.27:5221'; 
+    // this.baseUrl = 'http://10.219.238.27:5221';
     this.baseUrl = 'https://push-notification-dvsr.onrender.com';
     this.api = axios.create({
       baseURL: this.baseUrl,
@@ -42,7 +42,7 @@ class CallManageService {
         return false;
       }
     }
-    return true; 
+    return true;
   }
 
   // 2. Global Busy Sync (Pro-Tip)
@@ -60,12 +60,20 @@ class CallManageService {
         const batch = firestore().batch();
         activeCalls.docs.forEach(doc => {
           if (doc.data().status === 'accepted') {
-             NavigationService.navigate('Screens', {
+            // Only restore if the call started within the last 10 minutes
+            // (prevents stale 'accepted' state from incorrectly restoring old calls)
+            const callAge = Date.now() - (doc.data().initiationTimestamp || 0);
+            if (callAge < 600000) {
+              NavigationService.navigate('Screens', {
                 screen: 'ActiveCallScreen',
                 params: { callId: doc.id, isCaller: false }
-             });
+              });
+            } else {
+              // Stale accepted call — mark ended
+              batch.update(doc.ref, { status: 'ended' });
+            }
           } else {
-             batch.update(doc.ref, { status: 'missed' });
+            batch.update(doc.ref, { status: 'missed' });
           }
         });
         await batch.commit();
@@ -96,7 +104,7 @@ class CallManageService {
       return { success: false, message: 'Permission denied' };
     }
 
-    this.isBusy = true; 
+    this.isBusy = true;
 
     let callerIP = "0.0.0.0";
     try {
@@ -116,7 +124,7 @@ class CallManageService {
         receiverName: receiverName || 'User',
         receiverPhoto: receiverPhoto || null,
         type: callType || 'audio',
-        status: 'initiating', 
+        status: 'initiating',
         initiationTimestamp: Date.now(),
         createdAt: firestore.FieldValue.serverTimestamp(),
       });
@@ -124,9 +132,9 @@ class CallManageService {
       // Step B: Immediate UI Transition (Phase 1)
       NavigationService.navigate('Screens', {
         screen: 'OutgoingCallScreen',
-        params: { 
-          callId: callRef.id, 
-          receiverId: receiverId, 
+        params: {
+          callId: callRef.id,
+          receiverId: receiverId,
           receiverName: receiverName || 'User',
           receiverPhoto: receiverPhoto,
           callType: callType
@@ -146,10 +154,10 @@ class CallManageService {
           Alert.alert("User Busy", "The recipient is currently on another call.");
         }
       }).catch(err => {
-          const errMsg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
-          console.error("Backend Call Request Failed:", errMsg);
-          this.updateCallStatus(callRef.id, 'failed');
-          this.isBusy = false;
+        const errMsg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
+        console.error("Backend Call Request Failed:", errMsg);
+        this.updateCallStatus(callRef.id, 'failed');
+        this.isBusy = false;
       });
 
       return { success: true, callId: callRef.id };
@@ -183,25 +191,25 @@ class CallManageService {
   // 5. Update Status (Helper)
   async updateCallStatus(callId, status) {
     try {
-        await firestore().collection('calls').doc(callId).update({ status });
-        if (['ended', 'cancelled', 'declined', 'user_unavailable', 'missed', 'failed'].includes(status)) {
-            this.isBusy = false;
-        }
+      await firestore().collection('calls').doc(callId).update({ status });
+      if (['ended', 'cancelled', 'declined', 'user_unavailable', 'missed', 'failed'].includes(status)) {
+        this.isBusy = false;
+      }
     } catch (e) {
-        console.error("Update Status Error:", e);
+      console.error("Update Status Error:", e);
     }
   }
 
   async getPublicIP() {
     return new Promise((resolve, reject) => {
       const configuration = {
-        iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' } ],
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }],
       };
       const pc = new RTCPeerConnection(configuration);
       pc.onicecandidate = (event) => {
         if (event.candidate) {
           const candidate = event.candidate.candidate;
-          const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/; 
+          const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/;
           const ipAddress = candidate.match(ipRegex);
           if (ipAddress && ipAddress[1] && candidate.includes('srflx')) {
             resolve(ipAddress[1]);

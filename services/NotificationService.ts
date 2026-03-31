@@ -20,21 +20,21 @@ const NOTIFICATION_BRIDGE_URL = 'https://push-notification-dvsr.onrender.com';
  */
 export const handleBackgroundMessage = async (remoteMessage: any) => {
   console.log('[FCM] 🟠 HEADLESS BACKGROUND ARRIVED:', remoteMessage.data);
-  
+
   const type = remoteMessage.data?.type;
 
   try {
     if (type === 'INCOMING_CALL') {
       await handleNotificationLogic(remoteMessage);
-    } 
+    }
     else if (type === 'CALL_CANCELLED') {
       const callId = remoteMessage.data?.callId as string;
       if (callId) await notifee.cancelNotification(callId);
-    } 
+    }
     else if (type === 'encrypted_chat') {
       const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
       const myUid = credentials ? credentials.username : null;
-      
+
       // Even if myUid is missing, we proceed to display a "Locked" notification
       await notificationServiceReference.handleEncryptedNotification(remoteMessage, myUid, true);
     }
@@ -62,14 +62,12 @@ class NotificationService {
     // --- FOREGROUND MESSAGES ---
     messaging().onMessage(async (remoteMessage) => {
       console.log('[NotificationService] 🔵 FOREGROUND FCM ARRIVED:', remoteMessage.data);
-      
+
       const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
       const myUid = credentials ? credentials.username : null;
 
-      if (remoteMessage.data?.type === 'INCOMING_CALL') {
-        await handleNotificationLogic(remoteMessage);
-      }
-
+      // NOTE: INCOMING_CALL is handled exclusively in App.tsx to avoid double-notification.
+      // This handler focuses only on chat notifications.
       if (remoteMessage.data?.type === 'CALL_CANCELLED') {
         const callId = remoteMessage.data?.callId as string;
         if (callId) await notifee.cancelNotification(callId);
@@ -100,7 +98,8 @@ class NotificationService {
     };
 
     notifee.onForegroundEvent(handleEvent);
-    notifee.onBackgroundEvent(async (event) => handleEvent(event));
+    // NOTE: onBackgroundEvent is registered as a standalone handler in index.js
+    // (required by Notifee for headless background/killed-state execution).
   }
 
   /**
@@ -113,7 +112,7 @@ class NotificationService {
     try {
       await this.createDefaultChannels();
       const localContact = LocalDBService.getContactByUid(senderId);
-      
+
       // Fallback Display Metadata
       const displayTitle = senderName || localContact?.name || senderPhone || 'Private Message';
       let finalBody = isImage === 'true' ? '📷 New Photo' : '🔒 New Encrypted Message (Tap to See)';
