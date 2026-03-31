@@ -58,27 +58,56 @@ class CallManageService {
       if (!activeCalls.empty) {
         console.log(`[CallManageService] Found ${activeCalls.size} call sessions.`);
         const batch = firestore().batch();
+        const now = Date.now();
+
         activeCalls.docs.forEach(doc => {
-          if (doc.data().status === 'accepted') {
-            // Only restore if the call started within the last 10 minutes
-            // (prevents stale 'accepted' state from incorrectly restoring old calls)
-            const callAge = Date.now() - (doc.data().initiationTimestamp || 0);
-            if (callAge < 600000) {
-              NavigationService.navigate('Screens', {
-                screen: 'ActiveCallScreen',
-                params: { callId: doc.id, isCaller: false }
-              });
-            } else {
-              // Stale accepted call — mark ended
-              batch.update(doc.ref, { status: 'ended' });
+          const callData = doc.data();
+          const callId = doc.id;
+          
+          const lastHeartbeat = callData.lastHeartbeat?.toMillis?.() || 0;
+          const initiationTime = callData.initiationTimestamp || 0;
+          
+          // ── GHOST CALL DETECTION ──
+          // A call is "alive" if:
+          // 1. It was initiated very recently (last 2 minutes) - ALWAYS trust new calls
+          // 2. OR it has a recent heartbeat (last 20 seconds) - SERVER TIME converted to local
+          const isNewCall = (now - initiationTime < 120000);
+          const hasRecentHeartbeat = (now - lastHeartbeat < 20000);
+          
+          const isAlive = isNewCall || hasRecentHeartbeat;
+
+          if (callData.status === 'accepted' && isAlive) {
+            // ── REDUNDANCY GUARD (Fix: 1s call drop) ─────────────────────────────
+            // If the app is ALREADY busy (e.g. answering via a notification click),
+            // skip the redundant navigation to prevent unmount race conditions.
+            if (this.isBusy) {
+              console.log("[CallManageService] App is already busy. Skipping sync-driven navigation.");
+              return;
             }
+
+            console.log(`[CallManageService] Restoring active call: ${callId}`);
+            this.isBusy = true;
+            NavigationService.navigate('Screens', {
+              screen: 'ActiveCallScreen',
+              params: { callId, isCaller: false }
+            });
           } else {
-            batch.update(doc.ref, { status: 'missed' });
+            // Call is either stale or not yet accepted — mark as terminal to clean up
+            const endStatus = callData.status === 'accepted' ? 'ended' : 'missed';
+            batch.update(doc.ref, { status: endStatus });
           }
         });
         await batch.commit();
+        
+        // Only reset isBusy if we didn't restore an active call
+        // This prevents double navigation when answering from kill mode
+        if (!this.isBusy) {
+          this.isBusy = false;
+        }
+      } else {
+        // No active calls found, ensure isBusy is reset
+        this.isBusy = false;
       }
-      this.isBusy = false;
     } catch (e) {
       console.error("Busy Sync Error:", e);
     }

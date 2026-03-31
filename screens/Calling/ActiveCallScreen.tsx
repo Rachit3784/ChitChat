@@ -177,7 +177,23 @@ const CallActiveScreen = ({ route, navigation }: any) => {
               if (change.type === 'added') handleRemoteCandidate(change.doc.data());
             });
           });
-          return () => { unsubAnswer(); unsubIce(); };
+
+          // ── HEARTBEAT: Update 'lastHeartbeat' every 10 seconds ──────────────────────
+          const heartbeatInterval = setInterval(async () => {
+            try {
+              await firestore().collection('calls').doc(callId).update({
+                lastHeartbeat: firestore.FieldValue.serverTimestamp(),
+              });
+            } catch (e) {
+              console.warn('[WebRTC] Heartbeat update failed:', e);
+            }
+          }, 10000);
+
+          return () => { 
+            unsubAnswer(); 
+            unsubIce(); 
+            clearInterval(heartbeatInterval);
+          };
         } else {
           const unsubOffer = callDoc.onSnapshot(async doc => {
             const data = doc.data();
@@ -196,7 +212,23 @@ const CallActiveScreen = ({ route, navigation }: any) => {
               if (change.type === 'added') handleRemoteCandidate(change.doc.data());
             });
           });
-          return () => { unsubOffer(); unsubIce(); };
+
+          // ── HEARTBEAT: Update 'lastHeartbeat' every 10 seconds ──────────────────────
+          const heartbeatInterval = setInterval(async () => {
+            try {
+              await firestore().collection('calls').doc(callId).update({
+                lastHeartbeat: firestore.FieldValue.serverTimestamp(),
+              });
+            } catch (e) {
+              console.warn('[WebRTC] Heartbeat update failed:', e);
+            }
+          }, 10000);
+
+          return () => { 
+            unsubOffer(); 
+            unsubIce(); 
+            clearInterval(heartbeatInterval);
+          };
         }
       } catch (e: any) {
         console.error("WebRTC Setup Error:", e);
@@ -221,6 +253,16 @@ const CallActiveScreen = ({ route, navigation }: any) => {
         pc.current.addIceCandidate(new RTCIceCandidate(candidate));
       }
     };
+
+    // ──────────────── CONNECTION TIMEOUT ────────────────────────────────────────
+    // If call doesn't reach 'Connected' within 30s, automatically end it.
+    // This ensures both peers are cleaned up even if WebRTC fails to connect.
+    const connectionTimerId = setTimeout(() => {
+      if (isMounted && connectionStatus !== 'Connected') {
+        console.warn('[WebRTC] Connection timeout after 30s. Ending call.');
+        endCall();
+      }
+    }, 30000);
 
     // Kill-mode fix: Wait for Activity to be fully initialized before requesting media
     const { InteractionManager } = require('react-native');
@@ -256,6 +298,7 @@ const CallActiveScreen = ({ route, navigation }: any) => {
       isMounted = false;
       unsubStatus();
       cleanup();
+      clearTimeout(connectionTimerId);
     };
   }, []);
 

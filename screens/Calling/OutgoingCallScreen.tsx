@@ -31,7 +31,9 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
         const currentStatus = callSnap.data()?.status;
 
         if (currentStatus === 'accepted') {
-          // Call already accepted (e.g. user re-tapped outgoing notif) — go directly
+          // Call already accepted (e.g. user re-tapped outgoing notif or status changed while backgrounded)
+          // Update the notification state before moving to ActiveCallScreen
+          await convertOutgoingToOngoing(callId, receiverName);
           navigation.replace('Screens', {
             screen: 'ActiveCallScreen',
             params: { callId, isCaller: true },
@@ -39,7 +41,9 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
           return;
         } else if (['declined', 'cancelled', 'missed', 'user_unavailable', 'failed', 'ended']
             .includes(currentStatus || '')) {
-          // Call already in terminal state — navigate back
+          // Call already in terminal state — clean up notification and navigate back
+          await notifee.cancelNotification(callId);
+          await notifee.stopForegroundService();
           CallManageService.isBusy = false;
           navigation.canGoBack()
             ? navigation.goBack()
@@ -89,7 +93,7 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
 
           } else if (data.status === 'declined') {
             CallManageService.isBusy = false;
-            await notifee.cancelNotification(`outgoing_${callId}`);
+            await notifee.cancelNotification(callId);
             await notifee.stopForegroundService();
             await showCallStatusNotification(callId, 'declined', receiverName);
             CallLogService.saveCallLog({
@@ -109,7 +113,7 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
 
           } else if (['user_unavailable', 'failed'].includes(data.status)) {
             CallManageService.isBusy = false;
-            await notifee.cancelNotification(`outgoing_${callId}`);
+            await notifee.cancelNotification(callId);
             await notifee.stopForegroundService();
             await showCallStatusNotification(callId, 'unavailable', receiverName);
             CallLogService.saveCallLog({
@@ -129,7 +133,7 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
 
           } else if (['cancelled', 'missed'].includes(data.status)) {
             CallManageService.isBusy = false;
-            await notifee.cancelNotification(`outgoing_${callId}`);
+            await notifee.cancelNotification(callId);
             await notifee.stopForegroundService();
             navigation.canGoBack()
               ? navigation.goBack()
@@ -137,9 +141,21 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
           }
         });
 
+      // ── HEARTBEAT: Update 'lastHeartbeat' every 10 seconds ──────────────────────
+      const heartbeatInterval = setInterval(async () => {
+        try {
+          await firestore().collection('calls').doc(callId).update({
+            lastHeartbeat: firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (e) {
+          console.warn('[OutgoingCall] Heartbeat failed:', e);
+        }
+      }, 10000);
+
       // 45s Timeout fallback — auto-mark missed if no answer
       timeoutId = setTimeout(async () => {
-        await notifee.cancelNotification(`outgoing_${callId}`);
+        clearInterval(heartbeatInterval);
+        await notifee.cancelNotification(callId);
         await notifee.stopForegroundService();
         CallLogService.saveCallLog({
           id: callId,
@@ -162,7 +178,7 @@ const OutgoingCallScreen = ({ route, navigation }: { route: any; navigation: any
       if (unsubscribe) unsubscribe();
       if (timeoutId) clearTimeout(timeoutId);
       // Safety: cancel notification if screen unmounts unexpectedly
-      notifee.cancelNotification(`outgoing_${callId}`).catch(() => {});
+      notifee.cancelNotification(callId).catch(() => {});
     };
   }, [callId]);
 

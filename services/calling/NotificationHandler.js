@@ -41,6 +41,7 @@ export const displayIncomingCall = async (data) => {
         id: 'default',
         launchActivity: 'default',
       },
+      timeoutAfter: 45000, // Auto-dismiss after 45s if no action taken
     },
   });
 
@@ -106,8 +107,8 @@ export const convertToOngoingCall = async (callId, callerName) => {
 
 // 2b. Caller-side: Convert Outgoing Notification → Ongoing (when receiver accepts)
 export const convertOutgoingToOngoing = async (callId, receiverName) => {
-  // Cancel the outgoing notification (outgoing_ prefix)
-  await notifee.cancelNotification(`outgoing_${callId}`);
+  // No need to cancel manually anymore — using the same ID (callId) will overwrite
+  // the 'Calling...' notification with 'Call Connected' automatically.
 
   const channelId = await notifee.createChannel({
     id: 'ongoing-calls',
@@ -116,13 +117,17 @@ export const convertOutgoingToOngoing = async (callId, receiverName) => {
     vibration: false,
   });
 
-  // Create the standard ongoing notification with the plain callId
-  // so the same logic works for both caller and receiver in App.tsx, index.js
+  // Create the standard ongoing notification with the SAME callId
   await notifee.displayNotification({
     id: callId,
     title: '\uD83D\uDCF5 Call Connected',
     body: `In call with ${receiverName || 'User'}`,
-    data: { type: 'ongoing_call', callId: callId, isCaller: 'true' },
+    data: { 
+      type: 'ongoing_call', 
+      callId: callId, 
+      isCaller: 'true',
+      receiverName: receiverName || 'User' // Critical for recovery on tap
+    },
     android: {
       channelId,
       ongoing: true,
@@ -149,7 +154,6 @@ export const showMissedCall = async (callerName, callId) => {
 };
 
 // 5. Display Outgoing Call Notification (lets caller track call from background/kill mode)
-// Uses asForegroundService so the JS thread stays alive and Firestore listeners keep running.
 export const displayOutgoingCall = async (callId, receiverName, receiverPhoto = null) => {
   const channelId = await notifee.createChannel({
     id: 'outgoing-calls',
@@ -159,14 +163,14 @@ export const displayOutgoingCall = async (callId, receiverName, receiverPhoto = 
   });
 
   await notifee.displayNotification({
-    id: `outgoing_${callId}`,
+    id: callId, // Using unified callId
     title: '\uD83D\uDCDE Calling...',
     body: `Calling ${receiverName || 'User'}...`,
     data: { type: 'outgoing_call', callId, receiverName: receiverName || 'User' },
     android: {
       channelId,
       ongoing: true,
-      asForegroundService: true, // Keeps JS thread alive so Firestore listeners work
+      asForegroundService: true,
       autoCancel: false,
       color: '#34c759',
       pressAction: { id: 'default', launchActivity: 'default' },
@@ -263,15 +267,37 @@ export const handleNotificationLogic = async (remoteMessage) => {
       }
     });
 
-    // Step C: Latency Validation (10s Rule - Phase 3)
+    // Step C: FRESH STATUS & LATENCY CHECK (Phase 3 Fix) ───────────────────────
+    // 1. One-time fetch to ensure we don't ring for a call that is already over
+    const freshSnapshot = await firestore().collection('calls').doc(callId).get();
+    const currentData = freshSnapshot.data();
+    const currentStatus = currentData?.status;
+
+    if (currentData && ['ended', 'cancelled', 'declined', 'missed'].includes(currentStatus)) {
+      console.log(`[NotificationHandler] Call ${callId} status is ${currentStatus}. Skipping ringing.`);
+      // If it was cancelled or missed, show the missed call pill
+      if (currentStatus === 'cancelled' || currentStatus === 'missed') {
+        await showMissedCall(callerName, callId);
+      }
+      return;
+    }
+
+    // ── SKIP LATENCY CHECK IF ALREADY ACCEPTED ──────────────────────────────────
+    // This happens if answering from killed state takes >15s to boot. 
+    // We don't want to mark it 'missed' if the user successfully answered.
+    if (currentStatus === 'accepted') {
+      console.log(`[NotificationHandler] Call ${callId} already accepted. Skipping latency check.`);
+      return;
+    }
+
+    // 2. Delay check (Sender times out at 10s, so any message > 15s is likely stale)
     const initTime = parseInt(initiationTimestamp);
     const currentTime = Date.now();
     const delaySeconds = (currentTime - initTime) / 1000;
 
     console.log(`Call ${callId} Handshake: Delay ${delaySeconds}s`);
 
-    // Allow up to 30s window – kill-mode startup + JS bundle load can take 10-20s
-    if (delaySeconds > 30) {
+    if (delaySeconds > 15) {
       console.warn(`[Phase 3] Call ${callId} arrived too late (${delaySeconds}s). Marking as missed.`);
       await firestore().collection('calls').doc(callId).update({ status: 'missed' });
       await showMissedCall(callerName, callId);

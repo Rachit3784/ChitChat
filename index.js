@@ -47,18 +47,18 @@ notifee.onBackgroundEvent(async ({ type, detail }) => {
   if (!notification) return;
 
   const notifData = notification.data || {};
-  // callId is stored as the notification id OR inside data.callId
-  const callId = (notifData.callId) || notification.id;
+  // Now all notifications use the plain callId as their ID
+  const callId = notifData.callId || notification.id;
 
   try {
     if (type === EventType.ACTION_PRESS) {
       if (pressAction?.id === 'accept') {
-        // ── User pressed "Answer" from a background/killed-state notification ──
-        // 1. Mark call accepted in Firestore so the caller navigates to ActiveCallScreen
+        // ── Receiver pressed "Answer" ──
         await firestore().collection('calls').doc(callId).update({ status: 'accepted' });
-        // 2. Dismiss the ringing notification
+        // Start the ongoing call foreground service notification immediately
+        await convertToOngoingCall(callId, notifData.callerName || 'User');
         await notifee.cancelNotification(callId);
-        // 3. Persist a navigation intent — App.tsx reads this when it comes to foreground
+        // Persist navigation intent for App.tsx to catch when it boots
         await AsyncStorage.setItem('@pendingCallNav', JSON.stringify({
           callId,
           isCaller: false,
@@ -66,7 +66,7 @@ notifee.onBackgroundEvent(async ({ type, detail }) => {
         }));
 
       } else if (pressAction?.id === 'reject' || pressAction?.id === 'decline') {
-        // ── User pressed "Decline" ──
+        // ── Receiver pressed "Decline" ──
         await firestore().collection('calls').doc(callId).update({ status: 'declined' });
         await notifee.cancelNotification(callId);
 
@@ -78,32 +78,30 @@ notifee.onBackgroundEvent(async ({ type, detail }) => {
 
       } else if (pressAction?.id === 'end_outgoing_call') {
         // ── Caller pressed "End Call" on the outgoing-call notification (background) ──
-        const outgoingCallId = notifData.callId || callId;
-        await firestore().collection('calls').doc(outgoingCallId).update({ status: 'cancelled' });
-        await notifee.cancelNotification(`outgoing_${outgoingCallId}`);
+        // With unified IDs, we just use callId
+        await firestore().collection('calls').doc(callId).update({ status: 'cancelled' });
+        await notifee.cancelNotification(callId);
         await notifee.stopForegroundService();
       }
 
     } else if (type === EventType.PRESS) {
       // ── User tapped the notification body ──
-      if (notifData.type === 'ongoing_call') {
-        // Store navigation intent so App.tsx can redirect when it comes to foreground
+      const notifType = notifData.type;
+      if (notifType === 'ongoing_call') {
         await AsyncStorage.setItem('@pendingCallNav', JSON.stringify({
           callId,
           isCaller: false,
           timestamp: Date.now()
         }));
-      } else if (notifData.type === 'outgoing_call') {
-        // Caller tapped the outgoing notification — restore OutgoingCallScreen
+      } else if (notifType === 'outgoing_call') {
         await AsyncStorage.setItem('@pendingCallNav', JSON.stringify({
-          callId: notifData.callId || callId,
+          callId,
           isCaller: true,
           type: 'outgoing',
           receiverName: notifData.receiverName || 'User',
           timestamp: Date.now()
         }));
-      } else if (notifData.type === 'call_status' || notifData.type === 'missed_call') {
-        // ── Declined / Not Available / Missed notification tapped — go to Calls tab ──
+      } else if (notifType === 'call_status' || notifType === 'missed_call') {
         await AsyncStorage.setItem('@pendingCallNav', JSON.stringify({
           type: 'calls_tab',
           timestamp: Date.now()

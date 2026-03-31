@@ -28,8 +28,43 @@ export default function App() {
       CallManageService.syncBusyStateOnStart(userModelID);
       // Optional: Request battery optimization
       CallManageService.checkBatteryOptimization();
+      // Cleanup stale notifications that might have survived a killed-state transition
+      flushStaleNotifications();
     }
   }, [userModelID]);
+
+  // ── Cleanup: Clear any "Ringing" notifications whose calls are already over ──
+  const flushStaleNotifications = async () => {
+    try {
+      const activeNotifications = await notifee.getDisplayedNotifications();
+      for (const notif of activeNotifications) {
+        const callId = notif.id;
+        if (!callId) continue;
+        
+        const notifData = notif.notification.data || {};
+
+        // ── SKIP PROTECTION ───────────────────────────────────────────────────────
+        // 1. Don't touch ongoing/outgoing call notifications (we need them alive!)
+        if (notifData.type === 'ongoing_call' || notifData.type === 'outgoing_call') continue;
+        // 2. Don't touch brief status toasts
+        if (callId.startsWith('status_')) continue;
+
+        // ── VERIFY & FLUSH ────────────────────────────────────────────────────────
+        if (callId) {
+          const callDoc = await firestore().collection('calls').doc(callId).get();
+          const status = callDoc.data()?.status;
+          
+          // Clear if call is over (not ringing/accepted/initiating)
+          if (status && !['ringing', 'initiating', 'accepted'].includes(status)) {
+            await notifee.cancelNotification(callId);
+            console.log(`[App] Flushed stale notification for call: ${callId} (status: ${status})`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[App] flushStaleNotifications failed:', e);
+    }
+  };
 
   // ── Kill-mode: Handle notification that opened the app from dead state ──────
   useEffect(() => {
@@ -46,14 +81,19 @@ export default function App() {
         if (pressAction?.id === 'accept') {
           // ── Receiver opened app via "Answer" button from killed state ──
           await firestore().collection('calls').doc(callId).update({ status: 'accepted' });
+          // Start the ongoing call foreground service notification immediately
+          await convertToOngoingCall(callId, notifData.callerName as string || 'User');
           await notifee.cancelNotification(callId);
-          setTimeout(() => {
-            (navigationRef.current as any)?.navigate('Screens', {
-              screen: 'ActiveCallScreen',
-              params: { callId, isCaller: false },
-            });
-          }, 1500);
-
+          
+          // CRITICAL: Set busy flag immediately to block redundant sync-driven navigation
+          CallManageService.isBusy = true;
+          
+          // Store navigaton intent — the AppState listener will catch this as soon as app is active
+          await AsyncStorage.setItem('@pendingCallNav', JSON.stringify({
+            callId,
+            isCaller: false,
+            timestamp: Date.now()
+          }));
         } else if (pressAction?.id === 'reject' || pressAction?.id === 'decline') {
           await firestore().collection('calls').doc(callId).update({ status: 'declined' });
           await notifee.cancelNotification(callId);
@@ -124,8 +164,17 @@ export default function App() {
     const handleAppStateChange = async (nextAppState: string) => {
       if (nextAppState === 'active') {
         try {
-          const raw = await AsyncStorage.getItem('@pendingCallNav');
-          if (!raw) return;
+          let raw = await AsyncStorage.getItem('@pendingCallNav');
+          
+          // ── RETRY LOGIC (Fix: Background Mode Answer Race Condition) ──
+          // When answering from the background, index.js saves this intent. 
+          // If the app comes to foreground faster than AsyncStorage can save,
+          // we wait 500ms and check one more time before giving up.
+          if (!raw) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            raw = await AsyncStorage.getItem('@pendingCallNav');
+            if (!raw) return;
+          }
           const { callId, isCaller, type: navType, receiverName, timestamp } = JSON.parse(raw);
           await AsyncStorage.removeItem('@pendingCallNav');
 
@@ -139,11 +188,13 @@ export default function App() {
           if (navType === 'outgoing') {
             // Restore outgoing call screen or go to active call
             if (status === 'accepted') {
+              CallManageService.isBusy = true;
               (navigationRef.current as any)?.navigate('Screens', {
                 screen: 'ActiveCallScreen',
                 params: { callId, isCaller: true },
               });
             } else if (status === 'ringing' || status === 'initiating') {
+              CallManageService.isBusy = true;
               (navigationRef.current as any)?.navigate('Screens', {
                 screen: 'OutgoingCallScreen',
                 params: {
@@ -157,6 +208,7 @@ export default function App() {
             }
           } else if (status === 'accepted') {
             // Restore incoming active call
+            CallManageService.isBusy = true;
             (navigationRef.current as any)?.navigate('Screens', {
               screen: 'ActiveCallScreen',
               params: { callId, isCaller },
@@ -169,6 +221,9 @@ export default function App() {
     };
 
     const subscription = AppState.addEventListener('change', handleAppStateChange);
+    // Explicitly run once at mount to catch any navigation intents stored by getInitialNotification
+    handleAppStateChange('active');
+    
     return () => subscription.remove();
   }, []);
 
@@ -194,6 +249,9 @@ export default function App() {
           await firestore().collection('calls').doc(notification.id).update({ status: 'accepted' });
           await convertToOngoingCall(notification.id, notification.data?.callerName);
 
+          // IMPORTANT: Set busy flag so global sync logic doesn't duplicate navigation
+          CallManageService.isBusy = true;
+
           (navigationRef.current as any)?.navigate('Screens', {
             screen: 'ActiveCallScreen',
             params: { callId: notification.id, isCaller: false }
@@ -209,7 +267,7 @@ export default function App() {
           // ── Caller taps "End Call" on outgoing notification while app is in foreground ──
           const outCallId = (notification.data?.callId as string) || notification.id!;
           await firestore().collection('calls').doc(outCallId).update({ status: 'cancelled' });
-          await notifee.cancelNotification(`outgoing_${outCallId}`);
+          await notifee.cancelNotification(outCallId);
           await notifee.stopForegroundService();
         }
       } else if (type === EventType.PRESS) {

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView } from 'react-na
 import firestore from '@react-native-firebase/firestore';
 import notifee from '@notifee/react-native';
 import CallManageService from '../../services/calling/CallManageService';
+import { convertToOngoingCall } from '../../services/calling/NotificationHandler';
 
 const IncomingCallScreen = ({ route, navigation }: any) => {
   const { callId, callerName } = route.params;
@@ -26,7 +27,8 @@ const IncomingCallScreen = ({ route, navigation }: any) => {
       // Final Check: Ensure call is still active before answer
       const callDoc = await firestore().collection('calls').doc(callId).get();
       const status = callDoc.data()?.status;
-      if (status !== 'ringing' && status !== 'initiating') {
+      // Allow answering if ringing OR if it was just accepted by the background handler
+      if (!['ringing', 'initiating', 'accepted'].includes(status)) {
         console.warn(`Call cannot be answered. Current status: ${status}`);
         await notifee.cancelNotification(callId);
         await notifee.stopForegroundService();
@@ -36,6 +38,8 @@ const IncomingCallScreen = ({ route, navigation }: any) => {
 
       await notifee.cancelNotification(callId);
       await firestore().collection('calls').doc(callId).update({ status: 'accepted' });
+      // Start foreground service for background protection
+      await convertToOngoingCall(callId, callerName);
       // Navigate through the Screens stack (not a direct screen replace)
       navigation.replace('ActiveCallScreen', { callId, isCaller: false });
     } catch (e) {
