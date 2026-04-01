@@ -29,7 +29,10 @@ export const handleBackgroundMessage = async (remoteMessage: any) => {
     }
     else if (type === 'CALL_CANCELLED') {
       const callId = remoteMessage.data?.callId as string;
-      if (callId) await notifee.cancelNotification(callId);
+      if (callId) {
+        await notifee.stopForegroundService();
+        await notifee.cancelNotification(callId);
+      }
     }
     else if (type === 'encrypted_chat') {
       const credentials = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE_PRIVATE });
@@ -70,7 +73,10 @@ class NotificationService {
       // This handler focuses only on chat notifications.
       if (remoteMessage.data?.type === 'CALL_CANCELLED') {
         const callId = remoteMessage.data?.callId as string;
-        if (callId) await notifee.cancelNotification(callId);
+        if (callId) {
+          await notifee.stopForegroundService();
+          await notifee.cancelNotification(callId);
+        }
       }
 
       if (remoteMessage.data?.type === 'encrypted_chat' && myUid) {

@@ -43,9 +43,6 @@ export default function App() {
         
         const notifData = notif.notification.data || {};
 
-        // ── SKIP PROTECTION ───────────────────────────────────────────────────────
-        // 1. Don't touch ongoing/outgoing call notifications (we need them alive!)
-        if (notifData.type === 'ongoing_call' || notifData.type === 'outgoing_call') continue;
         // 2. Don't touch brief status toasts
         if (callId.startsWith('status_')) continue;
 
@@ -56,8 +53,14 @@ export default function App() {
           
           // Clear if call is over (not ringing/accepted/initiating)
           if (status && !['ringing', 'initiating', 'accepted'].includes(status)) {
+            await notifee.stopForegroundService();
             await notifee.cancelNotification(callId);
             console.log(`[App] Flushed stale notification for call: ${callId} (status: ${status})`);
+            
+            // Also explicitly ensure the global busy flag is reset
+            if (CallManageService.isBusy) {
+              CallManageService.isBusy = false;
+            }
           }
         }
       }
@@ -208,11 +211,15 @@ export default function App() {
             }
           } else if (status === 'accepted') {
             // Restore incoming active call
-            CallManageService.isBusy = true;
-            (navigationRef.current as any)?.navigate('Screens', {
-              screen: 'ActiveCallScreen',
-              params: { callId, isCaller },
-            });
+            if (CallManageService.isBusy && navigationRef.current?.getCurrentRoute()?.name === 'ActiveCallScreen') {
+                console.log("[App] Already in ActiveCallScreen, denying redundant navigation");
+            } else {
+                CallManageService.isBusy = true;
+                (navigationRef.current as any)?.navigate('Screens', {
+                  screen: 'ActiveCallScreen',
+                  params: { callId, isCaller },
+                });
+            }
           }
         } catch (e) {
           console.warn('[App] Pending call nav check failed:', e);

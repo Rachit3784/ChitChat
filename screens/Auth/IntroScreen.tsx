@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
   SafeAreaView, ActivityIndicator, Alert, StatusBar, Dimensions,
+  Image,
 } from 'react-native';
 import { Info, MessageCircleIcon, Shield, Lock } from 'lucide-react-native';
 import { loginWithGoogle } from '../../firebase/Auth';
 import userStore from '../../store/MyStore';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
 
 type RootStackParamList = {
   WelcomeScreen: undefined;
@@ -62,11 +64,7 @@ export default function WelcomeScreen({ navigation }: Props) {
       {/* ── Brand Section ───────────────────────────────────────────────────── */}
       <View style={styles.brandSection}>
         {/* Logo ring */}
-        <View style={styles.logoOuter}>
-          <View style={styles.logoInner}>
-            <MessageCircleIcon color={G.GOLD} size={44} strokeWidth={2} />
-          </View>
-        </View>
+        <Image source={require('../../asset/AirPlaneLogo.jpg')} height={100} width={100}/>
 
         <Text style={styles.brandName}>ChitChat</Text>
         <Text style={styles.tagline}>Private & Encrypted Messaging</Text>
